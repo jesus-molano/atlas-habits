@@ -1,0 +1,17 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.jesusmolano.atlas'
+version = '0.1.0'
+
+android {
+  namespace 'dev.jesusmolano.atlas.updater'
+
+  defaultConfig {
+    minSdkVersion 36
+    versionCode 1
+    versionName '0.1.0'
+  }
+}

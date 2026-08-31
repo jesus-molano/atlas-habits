@@ -1,0 +1,10 @@
+{
+  "name": "atlas-updater",
+  "version": "0.1.0",
+  "description": "Android-only, verified self-update module for Atlas",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*",
+    "react-native": "*"
+  }
+}

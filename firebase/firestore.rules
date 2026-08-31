@@ -1,0 +1,74 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Every authenticated Google account is isolated in its own UID namespace.
+    function isGoogleUserOwner(userId) {
+      return request.auth != null
+        && request.auth.uid == userId
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+
+    function isSha256(value) {
+      return value is string && value.matches('^[0-9a-f]{64}$');
+    }
+
+    match /users/{userId} {
+      allow read, write: if false;
+
+      match /devices/{deviceId} {
+        allow read: if isGoogleUserOwner(userId);
+        allow create: if isGoogleUserOwner(userId)
+          && request.resource.data.keys().hasOnly([
+            'schemaVersion', 'ownerUid', 'deviceId'
+          ])
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.ownerUid == userId
+          && request.resource.data.deviceId == deviceId;
+        allow update, delete: if false;
+
+        match /segments/{segmentId} {
+          allow read: if isGoogleUserOwner(userId);
+          allow create: if isGoogleUserOwner(userId)
+            && exists(/databases/$(database)/documents/users/$(userId)/devices/$(deviceId))
+            && request.resource.data.keys().hasOnly([
+              'schemaVersion',
+              'ownerUid',
+              'segmentId',
+              'deviceId',
+              'firstSeq',
+              'lastSeq',
+              'operationCount',
+              'previousSegmentHash',
+              'contentHash',
+              'payloadJson'
+            ])
+            && request.resource.data.schemaVersion == 1
+            && request.resource.data.ownerUid == userId
+            && request.resource.data.deviceId == deviceId
+            && request.resource.data.segmentId == segmentId
+            && segmentId.matches('^[0-9]{16}-[0-9]{16}$')
+            && request.resource.data.firstSeq is int
+            && request.resource.data.firstSeq > 0
+            && request.resource.data.lastSeq is int
+            && request.resource.data.lastSeq >= request.resource.data.firstSeq
+            && request.resource.data.operationCount is int
+            && request.resource.data.operationCount > 0
+            && request.resource.data.operationCount <= 100
+            && (
+              request.resource.data.previousSegmentHash == null
+              || isSha256(request.resource.data.previousSegmentHash)
+            )
+            && isSha256(request.resource.data.contentHash)
+            && request.resource.data.payloadJson is string
+            && request.resource.data.payloadJson.size() <= 750000;
+          allow update, delete: if false;
+        }
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -13,9 +13,15 @@ expo-env.d.ts
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
+*.jks.base64
+*.keystore.base64
 *.p8
 *.p12
 *.key
+*.apk
+*.aab
+keystore.properties
 *.mobileprovision
 
 # Metro
@@ -31,12 +37,20 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
+google-services*.json
+GoogleService-Info.plist
+firebase-adminsdk-*.json
+service-account*.json
+
+# Firebase CLI
+.firebase/
+firebase-debug.log*
 
 # typescript
 *.tsbuildinfo
-
-example
 
 # generated native folders
 /ios

@@ -1,56 +1,100 @@
-# Welcome to your Expo app 👋
+# Atlas
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Atlas es una aplicación personal de hábitos, tareas y rutinas para Android 16. Es local-first, no tiene anuncios ni funciones de pago y puede funcionar sin cuenta ni conexión.
 
-## Get started
+La interfaz usa una identidad propia: grafito, trayectorias finas y un único waypoint coral. El proyecto no contiene código, recursos ni diseños de HabitNow.
 
-1. Install dependencies
+## Incluye
 
-   ```bash
-   npm install
-   ```
+- Hábitos de sí/no, cantidad acumulable y duración con cronómetro.
+- Repetición por días, franjas diarias, intervalos y cuotas semanales o mensuales.
+- Tareas únicas o recurrentes, prioridad, fecha límite y checklist.
+- Rutinas ordenadas con modo guiado, pasos opcionales y temporizadores.
+- Historial corregible, días omitidos, pausas y margen de cierre.
+- Progreso, rachas y estadísticas sin gamificación invasiva.
+- Recordatorios exactos con acciones **Completar** y **Posponer**.
+- Widgets de progreso, hábitos y próximas tareas.
+- Datos locales en SQLite y sincronización opcional con Google/Firebase.
+- Actualizaciones firmadas desde GitHub Releases.
 
-2. Start the app
+## Requisitos
 
-   ```bash
-   npx expo start
-   ```
+- Android 16 / API 36.
+- Node.js 24.19 o posterior.
+- JDK 17.
+- Android SDK 36 para compilación local.
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Desarrollo
 
 ```bash
-npm run reset-project
+npm ci
+npm run prebuild
+npm run android
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Expo Go no sirve para este proyecto porque Atlas integra widgets, alarmas exactas y un módulo nativo de actualización. Usa un development build.
 
-### Other setup steps
+Comprobaciones:
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npm run typecheck
+npm run lint
+npm test
+```
 
-## Learn more
+## Datos y sincronización
 
-To learn more about developing your project with Expo, look at the following resources:
+SQLite es siempre la fuente de verdad. La aplicación arranca y conserva todas las funciones locales aunque Firebase no esté configurado.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Para activar la cuenta de Google y la sincronización opcional:
 
-## Join the community
+1. Crea un proyecto gratuito en Firebase.
+2. Registra la aplicación Android `atlas_habits.com`.
+3. Activa Google como proveedor de Authentication y crea Firestore.
+4. Copia `.env.example` a `.env.local` y rellena las variables públicas de Firebase.
+5. Guarda `google-services.json` fuera del repositorio y define `ATLAS_GOOGLE_SERVICES_FILE` con su ruta antes de ejecutar `expo prebuild`.
 
-Join our community of developers creating universal apps.
+Atlas no necesita Firebase Functions, Storage, Analytics ni un plan de pago. Consulta [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el protocolo local-first y sus límites.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## APK firmado y GitHub Releases
+
+El workflow `.github/workflows/android-release.yml` construye un APK universal, verifica su firma, genera `atlas.apk.sha256` y publica ambos archivos en una GitHub Release.
+
+Configura estos secretos en el entorno `android-release` del repositorio:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+La cuenta es opcional para quien use la app, pero la APK oficial incluye esa
+capacidad. Añade también el secreto `GOOGLE_SERVICES_JSON_BASE64`. El workflow deriva de ese JSON todos
+los identificadores públicos de Firebase y Google. Las reglas aíslan los datos
+por el UID de cada cuenta autenticada. Si omites el JSON, el release falla antes
+de compilar. Consulta
+[docs/RELEASING.md](docs/RELEASING.md) para los valores validados.
+
+Después incrementa `version` en `package.json` y `app.config.ts`, aumenta
+`android.versionCode`, crea un tag que coincida con la versión y súbelo:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+La clave de firma no se puede sustituir después sin romper las actualizaciones instaladas. Haz una copia cifrada fuera de GitHub.
+`android.versionCode` también debe aumentar en cada Release. El proceso completo,
+incluida la creación y verificación de la clave, está en
+[docs/RELEASING.md](docs/RELEASING.md).
+
+El CI también regenera el proyecto nativo sin Firebase y compila un APK debug
+con Android API 36. Así detecta errores de Gradle, Kotlin, widgets y config
+plugins antes de crear una etiqueta de Release.
+
+## Privacidad
+
+El uso sin cuenta no envía datos personales a ningún servidor. La sincronización solo se activa por decisión del usuario. Consulta [PRIVACY.md](PRIVACY.md).
+
+## Estado del proyecto
+
+Atlas está preparada como aplicación personal y repositorio público. Antes de distribuir el APK a más dispositivos, revisa los requisitos vigentes de verificación de desarrolladores de Android y prueba la actualización en un dispositivo secundario.
