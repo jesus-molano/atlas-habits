@@ -72,9 +72,28 @@ jobs:
           cache: gradle
 
       - name: Install Android SDK 36
+        shell: bash
         run: |
-          command -v sdkmanager
-          sdkmanager --install \
+          set -euo pipefail
+          ANDROID_SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [[ -z "${ANDROID_SDK}" || ! -d "${ANDROID_SDK}" ]]; then
+            echo "Android SDK root is unavailable" >&2
+            exit 1
+          fi
+          ANDROID_SDK="$(realpath "${ANDROID_SDK}")"
+          SDKMANAGER="${ANDROID_SDK}/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "${SDKMANAGER}" ]]; then
+            SDKMANAGER=""
+            if [[ -d "${ANDROID_SDK}/cmdline-tools" ]]; then
+              SDKMANAGER="$(find "${ANDROID_SDK}/cmdline-tools" -type f -name sdkmanager -perm -u+x | sort -V | tail -n 1)"
+            fi
+          fi
+          if [[ -z "${SDKMANAGER}" || ! -x "${SDKMANAGER}" ]]; then
+            echo "sdkmanager was not found under ${ANDROID_SDK}" >&2
+            exit 1
+          fi
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "${ANDROID_SDK}" "${ANDROID_SDK}" >> "${GITHUB_ENV}"
+          "${SDKMANAGER}" --sdk_root="${ANDROID_SDK}" --install \
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;27.1.12297006"
