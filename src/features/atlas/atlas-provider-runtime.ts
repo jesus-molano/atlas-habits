@@ -1,4 +1,38 @@
-import type { AtlasAppAdapter, AtlasSnapshot } from './types';
+import type {
+  AdapterActionResult,
+  AtlasAppAdapter,
+  AtlasSnapshot,
+} from './types';
+
+export type AtlasAdapterActionName = keyof Pick<
+  AtlasAppAdapter,
+  | 'connectGoogle'
+  | 'disconnectGoogle'
+  | 'requestNotificationAccess'
+  | 'requestExactAlarmAccess'
+  | 'checkForUpdate'
+>;
+
+export type UnavailableAdapterActionResult =
+  AdapterActionResult | (() => AdapterActionResult);
+
+/**
+ * Calls an optional adapter action without detaching it from its adapter.
+ * Class-based adapters rely on this binding for their runtime dependencies.
+ */
+export function invokeOptionalAdapterAction(
+  adapter: AtlasAppAdapter,
+  action: AtlasAdapterActionName,
+  unavailable: UnavailableAdapterActionResult,
+): Promise<AdapterActionResult> {
+  const handler = adapter[action];
+  if (!handler) {
+    return Promise.resolve(
+      typeof unavailable === 'function' ? unavailable() : unavailable,
+    );
+  }
+  return handler.call(adapter);
+}
 
 export type SnapshotRequestToken = Readonly<{
   mutationGeneration: number;

@@ -5,7 +5,7 @@ const googleServicesFile = process.env.ATLAS_GOOGLE_SERVICES_FILE;
 const config: ExpoConfig = {
   name: 'Atlas',
   slug: 'atlas-habits',
-  version: '0.1.0',
+  version: '0.1.1',
   orientation: 'portrait',
   icon: './assets/branding/icon.png',
   scheme: 'atlas',
@@ -13,7 +13,7 @@ const config: ExpoConfig = {
   android: {
     allowBackup: false,
     package: 'atlas_habits.com',
-    versionCode: 1,
+    versionCode: 2,
     ...(googleServicesFile ? { googleServicesFile } : {}),
     adaptiveIcon: {
       backgroundColor: '#070A0F',
@@ -68,7 +68,7 @@ const config: ExpoConfig = {
       'expo-notifications',
       {
         color: '#FF6B5E',
-        defaultChannel: 'reminders',
+        defaultChannel: 'atlas_reminders',
         icon: './assets/branding/notification-icon.png',
       },
     ],

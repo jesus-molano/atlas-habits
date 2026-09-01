@@ -2,7 +2,7 @@
 
 Atlas es una aplicación personal de hábitos, tareas y rutinas para Android 16. Es local-first, no tiene anuncios ni funciones de pago y puede funcionar sin cuenta ni conexión.
 
-La interfaz usa una identidad propia: grafito, trayectorias finas y un único waypoint coral. El proyecto no contiene código, recursos ni diseños de HabitNow.
+La interfaz usa una identidad propia: grafito, trayectorias finas y un único waypoint coral.
 
 ## Incluye
 
@@ -58,7 +58,7 @@ Atlas no necesita Firebase Functions, Storage, Analytics ni un plan de pago. Con
 
 ## APK firmado y GitHub Releases
 
-El workflow `.github/workflows/android-release.yml` construye un APK universal, verifica su firma, genera `atlas.apk.sha256` y publica ambos archivos en una GitHub Release.
+El workflow `.github/workflows/android-release.yml` construye un APK `arm64-v8a` para el dispositivo objetivo, verifica su firma, genera `atlas.apk.sha256` y publica ambos archivos en una GitHub Release.
 
 Configura estos secretos en el entorno `android-release` del repositorio:
 
@@ -78,8 +78,8 @@ Después incrementa `version` en `package.json` y `app.config.ts`, aumenta
 `android.versionCode`, crea un tag que coincida con la versión y súbelo:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 La clave de firma no se puede sustituir después sin romper las actualizaciones instaladas. Haz una copia cifrada fuera de GitHub.

@@ -1,12 +1,15 @@
 import {
   AlarmClock,
   ChevronRight,
+  Flag,
   Flame,
+  Folder,
   MoreHorizontal,
   Minus,
   Pause,
   Play,
   Plus,
+  Tag,
 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -30,6 +33,104 @@ function formatDuration(seconds: number): string {
   if (minutes > 0)
     return `${minutes} min ${remainder.toString().padStart(2, '0')} s`;
   return `${remainder} s`;
+}
+
+type ItemMetadataProps = {
+  category?: string;
+  deadlineAt?: string;
+  notes?: string;
+  tags: string[];
+};
+
+function ItemMetadata({
+  category,
+  deadlineAt,
+  notes,
+  tags,
+}: ItemMetadataProps) {
+  const theme = useTheme();
+  const cleanTags = tags.filter((tag) => tag.trim().length > 0);
+  const hasLabels = Boolean(category) || cleanTags.length > 0;
+
+  if (!notes && !hasLabels && !deadlineAt) return null;
+
+  return (
+    <View style={styles.details}>
+      {notes ? (
+        <Text numberOfLines={3} tone="secondary" variant="caption">
+          {notes}
+        </Text>
+      ) : null}
+      {hasLabels ? (
+        <View
+          accessible
+          accessibilityLabel={[
+            category ? `Categoría: ${category}` : null,
+            cleanTags.length > 0 ? `Etiquetas: ${cleanTags.join(', ')}` : null,
+          ]
+            .filter(Boolean)
+            .join('. ')}
+          style={styles.labelRow}
+        >
+          {category ? (
+            <View
+              style={[
+                styles.metadataPill,
+                { backgroundColor: theme.colors.surfaceMuted },
+              ]}
+            >
+              <Folder color={theme.colors.textSecondary} size={13} />
+              <Text numberOfLines={1} tone="secondary" variant="caption">
+                {category}
+              </Text>
+            </View>
+          ) : null}
+          {cleanTags.map((tag) => (
+            <View
+              key={tag}
+              style={[
+                styles.metadataPill,
+                { backgroundColor: theme.colors.surfaceMuted },
+              ]}
+            >
+              <Tag color={theme.colors.textMuted} size={12} />
+              <Text numberOfLines={1} tone="muted" variant="caption">
+                {tag}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {deadlineAt ? (
+        <View
+          accessible
+          accessibilityLabel={`Fecha límite: ${deadlineAt}`}
+          style={styles.deadlineRow}
+        >
+          <Flag color={theme.colors.warning} size={14} />
+          <Text tone="warning" variant="caption">
+            Límite: {deadlineAt}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function metadataAccessibilityLabel({
+  category,
+  deadlineAt,
+  notes,
+  tags,
+}: ItemMetadataProps): string {
+  return [
+    notes ? `Notas: ${notes}` : null,
+    category ? `Categoría: ${category}` : null,
+    tags.length > 0 ? `Etiquetas: ${tags.join(', ')}` : null,
+    deadlineAt ? `Fecha límite: ${deadlineAt}` : null,
+  ]
+    .filter(Boolean)
+    .join('. ');
 }
 
 type HabitCardProps = {
@@ -80,6 +181,11 @@ export function HabitCard({
       : habit.metric === 'duration'
         ? `${formatDuration(liveValue)} de ${formatDuration(habit.target)}`
         : `${liveValue} de ${habit.target} ${habit.unit}`;
+  const statusDetail = habit.paused
+    ? `Pausado${habit.pauseUntil ? ` hasta ${habit.pauseUntil}` : ''}`
+    : habit.skipped
+      ? 'Día omitido; la racha se mantiene'
+      : detail;
 
   return (
     <Card
@@ -108,7 +214,11 @@ export function HabitCard({
             </Text>
           </View>
         )}
-        <View style={styles.copy}>
+        <View
+          accessible
+          accessibilityLabel={`${habit.title}. ${statusDetail}. Racha: ${habit.streak} ${habit.streak === 1 ? 'día' : 'días'}`}
+          style={styles.copy}
+        >
           <Text
             numberOfLines={2}
             style={isComplete ? styles.completedText : undefined}
@@ -148,6 +258,12 @@ export function HabitCard({
         ) : null}
       </View>
 
+      <ItemMetadata
+        category={habit.category}
+        notes={habit.notes}
+        tags={habit.tags}
+      />
+
       {habit.metric !== 'boolean' && !unavailable ? (
         <>
           <View
@@ -170,7 +286,7 @@ export function HabitCard({
             {habit.metric === 'count' || !timerAvailable ? (
               <>
                 <IconButton
-                  accessibilityLabel={`Restar a ${habit.title}`}
+                  accessibilityLabel={`Restar ${habit.metric === 'duration' ? 'un minuto' : `una ${habit.unit || 'unidad'}`} a ${habit.title}`}
                   icon={Minus}
                   onPress={() => onAdd(habit.metric === 'duration' ? -60 : -1)}
                   size="compact"
@@ -186,7 +302,7 @@ export function HabitCard({
                     : liveValue}
                 </Text>
                 <IconButton
-                  accessibilityLabel={`Sumar a ${habit.title}`}
+                  accessibilityLabel={`Sumar ${habit.metric === 'duration' ? 'un minuto' : `una ${habit.unit || 'unidad'}`} a ${habit.title}`}
                   icon={Plus}
                   onPress={() => onAdd(habit.metric === 'duration' ? 60 : 1)}
                   size="compact"
@@ -272,6 +388,8 @@ export function TaskCard({
     medium: { label: 'Media', color: theme.colors.warning },
     high: { label: 'Alta', color: theme.colors.danger },
   }[task.priority];
+  const dueAt = task.occurrenceDueAt ?? task.dueAt;
+  const deadlineAt = task.occurrenceDeadlineAt ?? task.deadlineAt;
 
   return (
     <Card
@@ -285,7 +403,11 @@ export function TaskCard({
           label={`${task.completed ? 'Reabrir' : 'Completar'} ${task.title}`}
           onPress={onToggle}
         />
-        <View style={styles.copy}>
+        <View
+          accessible
+          accessibilityLabel={`${task.title}. Prioridad ${priority.label}${dueAt ? `. Programada: ${dueAt}` : ''}`}
+          style={styles.copy}
+        >
           <Text
             numberOfLines={2}
             style={task.completed ? styles.completedText : undefined}
@@ -300,11 +422,11 @@ export function TaskCard({
                 {priority.label}
               </Text>
             </View>
-            {(task.occurrenceDueAt ?? task.dueAt) ? (
+            {dueAt ? (
               <View style={styles.priority}>
                 <AlarmClock color={theme.colors.textMuted} size={14} />
                 <Text tone="muted" variant="caption">
-                  {task.occurrenceDueAt ?? task.dueAt}
+                  {dueAt}
                 </Text>
               </View>
             ) : null}
@@ -320,12 +442,19 @@ export function TaskCard({
           />
         ) : null}
       </View>
+      <ItemMetadata
+        category={task.category}
+        deadlineAt={deadlineAt}
+        notes={task.notes}
+        tags={task.tags}
+      />
       {task.subtasks.length > 0 ? (
         <View
           style={[styles.subtasks, { borderTopColor: theme.colors.border }]}
         >
           {task.subtasks.map((subtask) => (
             <Pressable
+              accessibilityLabel={`${subtask.title}${subtask.required ? ', obligatorio' : ', opcional'}`}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: subtask.completed }}
               key={subtask.id}
@@ -383,9 +512,11 @@ export function RoutineCard({
   const completed = routine.steps.filter((step) => step.completed).length;
   const ratio =
     routine.steps.length === 0 ? 0 : completed / routine.steps.length;
+  const routineMetadata = metadataAccessibilityLabel(routine);
   return (
     <Card
-      accessibilityLabel={`${routine.title}. ${completed} de ${routine.steps.length} pasos`}
+      accessibilityHint="Abre el modo guiado"
+      accessibilityLabel={`${routine.title}. ${completed} de ${routine.steps.length} pasos${routineMetadata ? `. ${routineMetadata}` : ''}`}
       onPress={onPress}
       padding="lg"
       style={styles.card}
@@ -431,7 +562,21 @@ export function RoutineCard({
           <ChevronRight color={theme.colors.primary} size={22} />
         )}
       </View>
-      <View style={[styles.track, { backgroundColor: theme.colors.track }]}>
+      <ItemMetadata
+        category={routine.category}
+        notes={routine.notes}
+        tags={routine.tags}
+      />
+      <View
+        accessibilityLabel={`Progreso de ${routine.title}: ${completed} de ${routine.steps.length} pasos`}
+        accessibilityRole="progressbar"
+        accessibilityValue={{
+          min: 0,
+          max: routine.steps.length,
+          now: completed,
+        }}
+        style={[styles.track, { backgroundColor: theme.colors.track }]}
+      >
         <View
           style={[
             styles.fill,
@@ -476,6 +621,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   completedText: { opacity: 0.55, textDecorationLine: 'line-through' },
+  details: { gap: 8, marginLeft: 60 },
+  labelRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  metadataPill: {
+    alignItems: 'center',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 5,
+    maxWidth: '100%',
+    minHeight: 28,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  deadlineRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
   priority: { alignItems: 'center', flexDirection: 'row', gap: 5 },
   dot: { borderRadius: 4, height: 7, width: 7 },
   subtasks: {

@@ -48,7 +48,7 @@ const lightColors: AtlasColors = {
   surfaceAccent: '#FFE5DF',
   text: '#20242A',
   textSecondary: '#525B66',
-  textMuted: '#707A86',
+  textMuted: '#5F6975',
   textInverse: '#FFFFFF',
   border: '#DDD6D0',
   borderStrong: '#A69B93',

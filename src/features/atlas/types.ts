@@ -138,7 +138,7 @@ export type AtlasSnapshot = {
   history: HistoryDay[];
   habitHistory: Record<string, Record<string, HabitDayRecord>>;
   sync: SyncState;
-  source: 'fallback_seed' | 'local_store' | 'external_service';
+  source: 'local_store' | 'external_service';
 };
 
 export type CreateHabitDraft = {

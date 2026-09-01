@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFallbackSnapshot } from '../features/atlas/fallback-data';
+import { createTestSnapshot } from '../test-support/create-test-snapshot';
 
 import { diffAtlasSnapshots } from './snapshot-diff';
 
 describe('snapshot definition diff', () => {
   it('turns a removed UI item into a durable delete command', () => {
-    const before = createFallbackSnapshot();
+    const before = createTestSnapshot();
     const removed = before.tasks[0]!;
     const next = {
       ...before,
@@ -20,7 +20,7 @@ describe('snapshot definition diff', () => {
   });
 
   it('persists schedule, reminder and habit goal edits', () => {
-    const before = createFallbackSnapshot();
+    const before = createTestSnapshot();
     const habit = before.habits[0]!;
     const next = {
       ...before,
@@ -60,7 +60,7 @@ describe('snapshot definition diff', () => {
   });
 
   it('does not treat runtime completion as a definition edit', () => {
-    const before = createFallbackSnapshot();
+    const before = createTestSnapshot();
     const next = {
       ...before,
       habits: before.habits.map((item, index) =>
@@ -77,7 +77,7 @@ describe('snapshot definition diff', () => {
   });
 
   it('persists only the new contribution of an aggregated period quota', () => {
-    const fallback = createFallbackSnapshot();
+    const fallback = createTestSnapshot();
     const quotaSchedule = {
       kind: 'period_quota' as const,
       period: 'week' as const,
@@ -116,7 +116,7 @@ describe('snapshot definition diff', () => {
   });
 
   it('does not discard a partial boolean quota contribution', () => {
-    const fallback = createFallbackSnapshot();
+    const fallback = createTestSnapshot();
     const before = {
       ...fallback,
       habits: fallback.habits.map((habit, index) =>

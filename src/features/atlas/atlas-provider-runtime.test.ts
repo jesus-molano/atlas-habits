@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  invokeOptionalAdapterAction,
   readSnapshotForProvider,
   SnapshotApplyGuard,
 } from './atlas-provider-runtime';
@@ -90,5 +91,51 @@ describe('readSnapshotForProvider', () => {
       readSnapshotForProvider(currentAdapter, 'invalidation'),
     ).resolves.toBeNull();
     expect(currentAdapter.loadSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+describe('invokeOptionalAdapterAction', () => {
+  it('keeps class adapter actions bound to their adapter instance', async () => {
+    class StatefulAdapter implements AtlasAppAdapter {
+      private readonly notificationMessage = 'Notificaciones activadas';
+
+      async loadSnapshot(): Promise<AtlasSnapshot> {
+        return snapshot('local_store');
+      }
+
+      async saveSnapshot(): Promise<void> {}
+
+      async requestNotificationAccess() {
+        return { ok: true, message: this.notificationMessage };
+      }
+    }
+
+    const currentAdapter = new StatefulAdapter();
+
+    await expect(
+      invokeOptionalAdapterAction(currentAdapter, 'requestNotificationAccess', {
+        ok: false,
+        message: 'No disponible',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      message: 'Notificaciones activadas',
+    });
+  });
+
+  it('uses the unavailable result factory when an action is absent', async () => {
+    const unavailable = vi.fn(() => ({
+      ok: false,
+      message: 'No disponible',
+    }));
+
+    await expect(
+      invokeOptionalAdapterAction(
+        adapter({ requestExactAlarmAccess: undefined }),
+        'requestExactAlarmAccess',
+        unavailable,
+      ),
+    ).resolves.toEqual({ ok: false, message: 'No disponible' });
+    expect(unavailable).toHaveBeenCalledOnce();
   });
 });

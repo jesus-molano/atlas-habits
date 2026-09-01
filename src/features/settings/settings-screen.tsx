@@ -17,15 +17,24 @@ import { Alert, StyleSheet, View } from 'react-native';
 
 import { Button, Card, Screen, Text } from '@/components/core';
 import { useThemeContext } from '@/design';
-import { useAtlasApp } from '@/features/atlas';
+import { useAtlasApp, type AdapterActionResult } from '@/features/atlas';
 import { ChoiceChip, PageHeader, SettingRow } from '@/features/ui';
 
-function showResult(title: string, ok: boolean, message: string) {
-  Alert.alert(ok ? title : 'No disponible', message);
+type ActionCopy = {
+  successTitle: string;
+  failureTitle: string;
+  unexpectedMessage?: string;
+};
+
+function showResult(copy: ActionCopy, result: AdapterActionResult) {
+  Alert.alert(
+    result.ok ? copy.successTitle : copy.failureTitle,
+    result.message,
+  );
 }
 
 export function SettingsScreen() {
-  const { mode, setMode } = useThemeContext();
+  const { mode, setMode, theme } = useThemeContext();
   const {
     snapshot,
     connectGoogle,
@@ -35,30 +44,57 @@ export function SettingsScreen() {
     checkForUpdate,
   } = useAtlasApp();
   const [pending, setPending] = useState<string | null>(null);
-  const version = Application.nativeApplicationVersion ?? '0.1.0';
+  const [googleFailed, setGoogleFailed] = useState(false);
+  const version = Application.nativeApplicationVersion ?? '0.1.1';
 
   const run = useCallback(
     async (
       id: string,
-      title: string,
-      action: () => Promise<{ ok: boolean; message: string }>,
+      copy: ActionCopy,
+      action: () => Promise<AdapterActionResult>,
+      onResult?: (result: AdapterActionResult) => void,
     ) => {
       setPending(id);
       try {
         const result = await action();
-        showResult(title, result.ok, result.message);
+        onResult?.(result);
+        showResult(copy, result);
       } catch {
-        showResult(
-          title,
-          false,
-          'No se pudo completar la acción. Inténtalo de nuevo.',
-        );
+        const result = {
+          ok: false,
+          message:
+            copy.unexpectedMessage ??
+            'No se pudo completar la acción. Inténtalo de nuevo.',
+        } satisfies AdapterActionResult;
+        onResult?.(result);
+        showResult(copy, result);
       } finally {
         setPending(null);
       }
     },
     [],
   );
+
+  const googleConnecting = pending === 'google';
+  const googleError =
+    googleFailed ||
+    snapshot.sync.status === 'error' ||
+    (snapshot.sync.status === 'connecting' && !googleConnecting);
+  const syncConnected = snapshot.sync.status === 'connected';
+  const syncTitle = syncConnected
+    ? 'Sincronización activa'
+    : googleConnecting
+      ? 'Conectando con Google'
+      : googleError
+        ? 'Sincronización no activada'
+        : 'Guardado en este dispositivo';
+  const syncDescription = syncConnected
+    ? (snapshot.sync.accountEmail ?? 'Cuenta de Google conectada')
+    : googleConnecting
+      ? 'Tus datos locales permanecen disponibles durante el proceso.'
+      : googleError
+        ? 'Puedes reintentarlo. Tus datos siguen guardados y la app funciona sin cuenta.'
+        : 'La app funciona completa sin cuenta. Conecta Google solo para sincronizar dispositivos.';
 
   return (
     <Screen
@@ -107,51 +143,73 @@ export function SettingsScreen() {
 
       <View style={styles.section}>
         <Text tone="muted" variant="eyebrow">
-          CUENTA Y SINCRONIZACIÓN
+          CUENTA Y SINCRONIZACIÓN OPCIONAL
         </Text>
         <Card padding="sm" variant="default">
           <SettingRow
-            description={
-              snapshot.sync.status === 'connected'
-                ? (snapshot.sync.accountEmail ?? 'Cuenta conectada')
-                : 'Tus datos siguen disponibles sin conexión.'
-            }
-            icon={snapshot.sync.status === 'connected' ? Cloud : HardDrive}
-            title={
-              snapshot.sync.status === 'connected'
-                ? 'Sincronización activa'
-                : 'Solo en este dispositivo'
-            }
+            description={syncDescription}
+            icon={syncConnected ? Cloud : HardDrive}
+            title={syncTitle}
             value={
-              snapshot.sync.status === 'connecting' ? 'Conectando…' : undefined
+              syncConnected
+                ? 'Activa'
+                : googleConnecting
+                  ? 'Conectando…'
+                  : 'Opcional'
             }
           />
-          {snapshot.sync.status === 'connected' ? (
+          {syncConnected ? (
             <Button
+              accessibilityHint="Detiene la sincronización; conserva los datos guardados en este dispositivo."
+              disabled={pending !== null && pending !== 'disconnect'}
               fullWidth
               label="Desconectar cuenta"
               leadingIcon={LogOut}
               loading={pending === 'disconnect'}
               onPress={() =>
-                void run('disconnect', 'Cuenta desconectada', disconnectGoogle)
+                void run(
+                  'disconnect',
+                  {
+                    successTitle: 'Cuenta desconectada',
+                    failureTitle: 'No se desconectó la cuenta',
+                  },
+                  disconnectGoogle,
+                )
               }
               variant="secondary"
             />
           ) : (
             <Button
+              accessibilityHint="Inicia sesión para sincronizar entre dispositivos. No es necesario para usar la app."
+              disabled={pending !== null && pending !== 'google'}
               fullWidth
-              label="Continuar con Google"
+              label={
+                googleError
+                  ? 'Reintentar con Google'
+                  : 'Activar sincronización con Google'
+              }
               leadingIcon={Cloud}
               loading={pending === 'google'}
               onPress={() =>
-                void run('google', 'Cuenta conectada', connectGoogle)
+                void run(
+                  'google',
+                  {
+                    successTitle: 'Sincronización activada',
+                    failureTitle: 'No se activó la sincronización',
+                    unexpectedMessage:
+                      'No se pudo abrir el acceso con Google. Tus datos siguen guardados en este dispositivo.',
+                  },
+                  connectGoogle,
+                  (result) => setGoogleFailed(!result.ok),
+                )
               }
             />
           )}
           <View style={styles.note}>
-            <ShieldCheck size={17} />
+            <ShieldCheck color={theme.colors.success} size={17} />
             <Text style={styles.noteCopy} tone="secondary" variant="caption">
-              La cuenta es opcional. Atlas no vende datos ni muestra anuncios.
+              No necesitas iniciar sesión. Google solo añade una copia
+              sincronizada entre tus dispositivos.
             </Text>
           </View>
         </Card>
@@ -163,30 +221,40 @@ export function SettingsScreen() {
         </Text>
         <Card padding="sm" variant="default">
           <SettingRow
-            description="Permite completar o posponer desde la notificación."
+            accessibilityHint="Android pedirá el permiso o abrirá sus ajustes si debes activarlo allí."
+            description="Permite completar o posponer desde la notificación. Android puede pedir que lo actives en Ajustes."
+            disabled={pending !== null}
             icon={BellRing}
             onPress={() =>
               void run(
                 'notifications',
-                'Recordatorios activados',
+                {
+                  successTitle: 'Permiso de notificaciones',
+                  failureTitle: 'Permiso de notificaciones',
+                },
                 requestNotificationAccess,
               )
             }
             title="Permiso de notificaciones"
-            value={pending === 'notifications' ? 'Abriendo…' : undefined}
+            value={pending === 'notifications' ? 'Comprobando…' : undefined}
           />
           <SettingRow
-            description="Necesario para avisar a la hora exacta con el móvil en reposo."
+            accessibilityHint="Comprueba el permiso y abre Alarmas y recordatorios si debes activarlo manualmente."
+            description="Necesario para avisar a la hora exacta con el móvil en reposo. Puede requerir activación en Ajustes."
+            disabled={pending !== null}
             icon={AlarmClockCheck}
             onPress={() =>
               void run(
                 'alarms',
-                'Alarmas exactas activadas',
+                {
+                  successTitle: 'Alarmas exactas',
+                  failureTitle: 'Alarmas exactas',
+                },
                 requestExactAlarmAccess,
               )
             }
             title="Alarmas exactas"
-            value={pending === 'alarms' ? 'Abriendo…' : undefined}
+            value={pending === 'alarms' ? 'Comprobando…' : undefined}
           />
         </Card>
       </View>
@@ -197,10 +265,19 @@ export function SettingsScreen() {
         </Text>
         <Card padding="sm" variant="default">
           <SettingRow
+            accessibilityHint="Busca una versión nueva y, si existe, ofrece instalarla desde GitHub Releases."
             description="Busca una APK nueva en GitHub Releases y verifica su firma."
+            disabled={pending !== null}
             icon={GitBranch}
             onPress={() =>
-              void run('update', 'Atlas está al día', checkForUpdate)
+              void run(
+                'update',
+                {
+                  successTitle: 'Actualizaciones de Atlas',
+                  failureTitle: 'No se pudo actualizar',
+                },
+                checkForUpdate,
+              )
             }
             title="Comprobar actualización"
             value={pending === 'update' ? 'Buscando…' : `v${version}`}
@@ -233,7 +310,7 @@ export function SettingsScreen() {
       </View>
 
       <Card padding="lg" style={styles.about} variant="outlined">
-        <Info size={20} />
+        <Info color={theme.colors.primary} size={20} />
         <View style={styles.aboutCopy}>
           <Text variant="bodyStrong">Atlas {version}</Text>
           <Text tone="secondary" variant="caption">

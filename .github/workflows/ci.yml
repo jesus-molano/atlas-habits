@@ -84,5 +84,5 @@ jobs:
         run: npx expo prebuild --platform android --clean --no-install
 
       - name: Compile Android debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: ./gradlew :app:assembleDebug --no-daemon -PreactNativeArchitectures=arm64-v8a
         working-directory: android

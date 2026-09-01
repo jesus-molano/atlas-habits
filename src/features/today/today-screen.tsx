@@ -8,10 +8,16 @@ import {
   CalendarDays,
   Map,
   Settings2,
-  Sparkles,
 } from 'lucide-react-native';
 import { useMemo, useState, type ReactNode } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
 
 import {
   Button,
@@ -167,6 +173,7 @@ export function TodayScreen() {
   const theme = useTheme();
   const {
     snapshot,
+    hydrated,
     selectedDate,
     selectedHabits,
     isToday,
@@ -188,6 +195,10 @@ export function TodayScreen() {
     'history' | 'pause' | null
   >(null);
   const [pauseTargetId, setPauseTargetId] = useState<string | null>(null);
+  const hasProfileContent =
+    snapshot.habits.length > 0 ||
+    snapshot.tasks.length > 0 ||
+    snapshot.routines.length > 0;
   const selectedTasks = snapshot.tasks.filter((item) =>
     isScheduledOnDate(item.schedule, selectedDate),
   );
@@ -249,6 +260,59 @@ export function TodayScreen() {
       setPauseTargetId(null);
     }
   };
+
+  if (!hydrated) {
+    return (
+      <Screen
+        contentContainerStyle={styles.content}
+        safeAreaEdges={['top', 'left', 'right']}
+        scroll
+        scrollProps={{ contentInsetAdjustmentBehavior: 'never' }}
+      >
+        <PageHeader
+          description={dateLabel}
+          eyebrow="Atlas diario"
+          title="Hoy"
+        />
+        <View
+          accessibilityLabel="Cargando tu día"
+          accessibilityLiveRegion="polite"
+          accessibilityRole="progressbar"
+          style={styles.loading}
+        >
+          <ActivityIndicator color={theme.colors.primary} size="large" />
+          <Text align="center" tone="secondary" variant="body">
+            Preparando tu día…
+          </Text>
+        </View>
+      </Screen>
+    );
+  }
+
+  if (!hasProfileContent) {
+    return (
+      <Screen
+        contentContainerStyle={styles.content}
+        safeAreaEdges={['top', 'left', 'right']}
+        scroll
+        scrollProps={{ contentInsetAdjustmentBehavior: 'never' }}
+      >
+        <PageHeader
+          description={dateLabel}
+          eyebrow="Atlas diario"
+          title="Hoy"
+        />
+        <EmptyState
+          actionLabel="Crear mi primer elemento"
+          description="Añade un hábito, una tarea o una rutina. Todo se guardará en este dispositivo."
+          icon={Map}
+          onAction={() => router.push('/create')}
+          title="Tu Atlas empieza aquí"
+        />
+        <View style={styles.bottomSpace} />
+      </Screen>
+    );
+  }
 
   const section = (id: DashboardSectionId): ReactNode => {
     if (id === 'habits') {
@@ -408,22 +472,6 @@ export function TodayScreen() {
         />
       </Card>
 
-      {snapshot.source === 'fallback_seed' ? (
-        <Pressable
-          accessibilityRole="text"
-          style={[
-            styles.starterNote,
-            { backgroundColor: theme.colors.surfaceMuted },
-          ]}
-        >
-          <Sparkles color={theme.colors.primary} size={17} />
-          <Text style={styles.starterCopy} tone="secondary" variant="caption">
-            Hemos dejado una ruta de ejemplo. Puedes completarla, editarla o
-            crear la tuya.
-          </Text>
-        </Pressable>
-      ) : null}
-
       {ordering ? (
         <Card padding="sm" variant="outlined">
           <Text align="center" tone="secondary" variant="caption">
@@ -463,6 +511,13 @@ const styles = StyleSheet.create({
     minHeight: 62,
     justifyContent: 'center',
   },
+  loading: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 14,
+    justifyContent: 'center',
+    minHeight: 320,
+  },
   hero: { alignItems: 'center', flexDirection: 'row', gap: 16, minHeight: 142 },
   heroCopy: { flex: 1, gap: 6 },
   heroEyebrow: { alignItems: 'center', flexDirection: 'row', gap: 7 },
@@ -494,16 +549,6 @@ const styles = StyleSheet.create({
     top: 24,
     width: 10,
   },
-  starterNote: {
-    alignItems: 'center',
-    borderRadius: 14,
-    flexDirection: 'row',
-    gap: 10,
-    minHeight: 48,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  starterCopy: { flex: 1 },
   section: { gap: 8 },
   list: { gap: 10 },
   orderActions: { flexDirection: 'row', gap: 6 },

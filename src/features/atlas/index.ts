@@ -7,7 +7,7 @@ export type {
   AtlasAppContextValue,
   AtlasAppProviderProps,
 } from './atlas-provider';
-export { createFallbackSnapshot } from './fallback-data';
+export { createEmptySnapshot } from './empty-snapshot';
 export {
   createDefaultSchedule,
   expectedCompletions,

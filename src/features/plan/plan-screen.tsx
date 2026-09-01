@@ -1,9 +1,10 @@
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { CalendarRange, ListFilter, Plus } from 'lucide-react-native';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { Card, EmptyState, Screen, Text } from '@/components/core';
+import { useTheme } from '@/design';
 import { useAtlasApp } from '@/features/atlas';
 import { HabitCard, RoutineCard, TaskCard } from '@/features/today';
 import { ChoiceChip, PageHeader } from '@/features/ui';
@@ -20,6 +21,7 @@ function todayKey(): string {
 
 export function PlanScreen() {
   const router = useRouter();
+  const theme = useTheme();
   const [filter, setFilter] = useState<Filter>('all');
   const {
     snapshot,
@@ -32,7 +34,16 @@ export function PlanScreen() {
     skipHabit,
     pauseHabit,
     resumeHabit,
+    setSelectedDate,
   } = useAtlasApp();
+
+  useFocusEffect(
+    useCallback(() => {
+      // Plan exposes live completion controls, so they must always operate on
+      // today rather than a historical date previously selected in Hoy.
+      setSelectedDate(todayKey());
+    }, [setSelectedDate]),
+  );
   const visibleCount = useMemo(() => {
     if (filter === 'habit') return snapshot.habits.length;
     if (filter === 'task') return snapshot.tasks.length;
@@ -97,7 +108,7 @@ export function PlanScreen() {
 
       <Card padding="md" style={styles.summary} variant="outlined">
         <View style={styles.summaryIcon}>
-          <CalendarRange size={20} />
+          <CalendarRange color={theme.colors.primary} size={20} />
         </View>
         <View style={styles.summaryCopy}>
           <Text variant="bodyStrong">{visibleCount} elementos visibles</Text>
@@ -105,7 +116,7 @@ export function PlanScreen() {
             Los cambios se guardan en este dispositivo al instante.
           </Text>
         </View>
-        <ListFilter size={20} />
+        <ListFilter color={theme.colors.textMuted} size={20} />
       </Card>
 
       {visibleCount === 0 ? (

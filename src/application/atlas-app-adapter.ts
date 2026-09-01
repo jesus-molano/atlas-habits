@@ -1,8 +1,9 @@
 import * as Notifications from 'expo-notifications';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { Linking } from 'react-native';
 
 import { getCommandGateway, getDatabase, type CommandGateway } from '../data';
-import { createFallbackSnapshot } from '../features/atlas/fallback-data';
+import { createEmptySnapshot } from '../features/atlas/empty-snapshot';
 import type {
   AdapterActionResult,
   AtlasAppAdapter,
@@ -25,6 +26,7 @@ import { refreshAtlasWidgetsAsync } from '../widgets';
 
 import { localDateFromDate } from './date-time';
 import { getAtlasDeviceId } from './device-identity';
+import { withoutLegacyStarterItems } from './legacy-starter-cleanup';
 import { OptionalAtlasSync } from './optional-sync';
 import { AtlasSnapshotWriter } from './persistence';
 import { rescheduleAtlasRemindersAsync } from './reminder-scheduler';
@@ -36,8 +38,6 @@ import { SerializedAsyncQueue } from './serial-queue';
 import { diffAtlasSnapshots } from './snapshot-diff';
 import { loadAtlasSnapshotFromSQLite } from './snapshot-loader';
 import { atlasWidgetDataSource } from './widget-data-source';
-
-const STARTER_SEED_COMMAND_ID = 'atlas:starter-seed:v1';
 
 type SQLiteAtlasRuntime = Readonly<{
   database: SQLiteDatabase;
@@ -51,49 +51,6 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim()
     ? error.message
     : fallback;
-}
-
-function emptySnapshot(sync: SyncState): AtlasSnapshot {
-  return {
-    schemaVersion: 1,
-    source: 'local_store',
-    habits: [],
-    tasks: [],
-    routines: [],
-    dashboardOrder: ['routines', 'habits', 'tasks'],
-    history: [],
-    habitHistory: {},
-    sync,
-  };
-}
-
-async function hasStarterSeedMarker(
-  database: SQLiteDatabase,
-): Promise<boolean> {
-  const marker = await database.getFirstAsync<{ command_id: string }>(
-    'SELECT command_id FROM command_receipts WHERE command_id = ?',
-    [STARTER_SEED_COMMAND_ID],
-  );
-  return marker !== null;
-}
-
-async function markStarterSeeded(
-  database: SQLiteDatabase,
-  now: number,
-): Promise<void> {
-  await database.runAsync(
-    `INSERT OR IGNORE INTO command_receipts
-      (command_id, command_name, request_fingerprint, result_json, applied_at)
-     VALUES (?, 'application.seed', 'atlas-starter-seed-v1', ?, ?)`,
-    [STARTER_SEED_COMMAND_ID, JSON.stringify({ seedVersion: 1 }), now],
-  );
-}
-
-async function itemIds(database: SQLiteDatabase): Promise<string[]> {
-  const rows = await database.getAllAsync<{ id: string }>(
-    'SELECT id FROM items ORDER BY id',
-  );
-  return rows.map((row) => row.id);
 }
 
 export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
@@ -140,75 +97,22 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
   ): Promise<AtlasSnapshot> {
     return (
       (await this.readRawCanonical(runtime, now)) ??
-      emptySnapshot(this.syncState)
+      createEmptySnapshot(this.syncState)
     );
   }
 
-  private async ensureStarterSeed(
+  private async removeLegacyStarterItems(
     runtime: SQLiteAtlasRuntime,
     now: Date,
   ): Promise<void> {
-    if (await hasStarterSeedMarker(runtime.database)) return;
-
-    const seed = createFallbackSnapshot();
-    const existingIds = await itemIds(runtime.database);
-    const seedIds = new Set([
-      ...seed.habits.map((item) => item.id),
-      ...seed.tasks.map((item) => item.id),
-      ...seed.routines.map((item) => item.id),
-    ]);
-
-    if (existingIds.length === 0) {
-      await runtime.writer.applyChanges(
-        diffAtlasSnapshots(null, seed, localDateFromDate(now)),
-        seed,
-        localDateFromDate(now),
-      );
-    } else if (existingIds.every((id) => seedIds.has(id))) {
-      // Resume a first-launch seed that stopped between idempotent commands.
-      const existingSet = new Set(existingIds);
-      const missingItems = [
-        ...seed.habits,
-        ...seed.tasks,
-        ...seed.routines,
-      ].filter((item) => !existingSet.has(item.id));
-      await runtime.writer.applyChanges(
-        [
-          ...missingItems.map((item) => ({
-            kind: 'item.create' as const,
-            item,
-          })),
-          { kind: 'dashboard.reorder' as const, order: seed.dashboardOrder },
-        ],
-        seed,
-        localDateFromDate(now),
-      );
-    }
-
-    const stillStarterOnly = (await itemIds(runtime.database)).every((id) =>
-      seedIds.has(id),
-    );
-    if (stillStarterOnly) {
-      // Some progress projections (for example, a routine step) need a run to
-      // be created before it can then be closed. Two bounded passes converge
-      // the starter snapshot without turning normal hydration into a loop.
-      for (let pass = 0; pass < 2; pass += 1) {
-        const materialized = await this.readRawCanonical(runtime, now);
-        if (!materialized) break;
-        const changes = diffAtlasSnapshots(
-          materialized,
-          seed,
-          localDateFromDate(now),
-        );
-        if (changes.length === 0) break;
-        await runtime.writer.applyChanges(
-          changes,
-          seed,
-          localDateFromDate(now),
-        );
-      }
-    }
-    await markStarterSeeded(runtime.database, now.getTime());
+    const previous = await this.readRawCanonical(runtime, now);
+    if (!previous) return;
+    const next = withoutLegacyStarterItems(previous);
+    if (next === previous) return;
+    const localDate = localDateFromDate(now);
+    const changes = diffAtlasSnapshots(previous, next, localDate);
+    if (changes.length === 0) return;
+    await runtime.writer.applyChanges(changes, next, localDate);
   }
 
   private async runMaintenance(
@@ -246,7 +150,9 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
     return this.writeQueue.enqueue(async () => {
       const runtime = await this.runtime();
       const now = new Date();
-      await this.ensureStarterSeed(runtime, now);
+      // This migration must run before optional sync so its item deletions and
+      // tombstones are uploaded instead of restoring v0.1.0 example records.
+      await this.removeLegacyStarterItems(runtime, now);
       this.syncState = await runtime.sync.state(true);
       if (this.syncState.status === 'connected') {
         try {
@@ -273,7 +179,6 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
     await this.writeQueue.enqueue(async () => {
       const runtime = await this.runtime();
       const now = new Date();
-      await this.ensureStarterSeed(runtime, now);
       const previous = await this.readCanonical(runtime, now);
       const changes = diffAtlasSnapshots(
         previous,
@@ -334,10 +239,26 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
     try {
       await configureReminderCategoryAndChannelAsync();
       const existing = await Notifications.getPermissionsAsync();
+      if (!existing.granted && !existing.canAskAgain) {
+        await Linking.openSettings();
+        return {
+          ok: false,
+          message:
+            'Se han abierto los ajustes de Atlas. Activa Notificaciones y vuelve a la aplicación.',
+        };
+      }
       const permission = existing.granted
         ? existing
         : await Notifications.requestPermissionsAsync();
       if (!permission.granted) {
+        if (!permission.canAskAgain) {
+          await Linking.openSettings();
+          return {
+            ok: false,
+            message:
+              'Se han abierto los ajustes de Atlas. Activa Notificaciones y vuelve a la aplicación.',
+          };
+        }
         return {
           ok: false,
           message:

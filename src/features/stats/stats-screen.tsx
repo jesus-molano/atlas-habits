@@ -1,7 +1,14 @@
+import { useRouter } from 'expo-router';
 import { Award, CalendarCheck, Flame, Route } from 'lucide-react-native';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import { Card, ProgressOrbit, Screen, Text } from '@/components/core';
+import {
+  Card,
+  EmptyState,
+  ProgressOrbit,
+  Screen,
+  Text,
+} from '@/components/core';
 import { useTheme } from '@/design';
 import { useAtlasApp } from '@/features/atlas';
 import { PageHeader } from '@/features/ui';
@@ -31,8 +38,9 @@ function weekday(date: string): string {
 }
 
 export function StatsScreen() {
+  const router = useRouter();
   const theme = useTheme();
-  const { snapshot, progress } = useAtlasApp();
+  const { hydrated, snapshot, progress } = useAtlasApp();
   const recent = snapshot.history.slice(-35);
   const week = recent.slice(-7);
   const stats = streaks(recent.map((day) => day.ratio));
@@ -41,6 +49,69 @@ export function StatsScreen() {
       ? 0
       : week.reduce((sum, day) => sum + day.ratio, 0) / week.length;
   const bestHabit = [...snapshot.habits].sort((a, b) => b.streak - a.streak)[0];
+  const hasProfileContent =
+    snapshot.habits.length > 0 ||
+    snapshot.tasks.length > 0 ||
+    snapshot.routines.length > 0;
+
+  if (!hydrated) {
+    return (
+      <Screen
+        contentContainerStyle={styles.content}
+        safeAreaEdges={['top', 'left', 'right']}
+        scroll
+      >
+        <PageHeader
+          description="Tendencias claras, sin puntos ni premios artificiales."
+          eyebrow="Bitácora"
+          title="Estadísticas"
+        />
+        <View
+          accessibilityLabel="Cargando estadísticas"
+          accessibilityLiveRegion="polite"
+          accessibilityRole="progressbar"
+          style={styles.loading}
+        >
+          <ActivityIndicator color={theme.colors.primary} size="large" />
+          <Text align="center" tone="secondary" variant="body">
+            Preparando tu progreso…
+          </Text>
+        </View>
+      </Screen>
+    );
+  }
+
+  if (recent.length === 0) {
+    return (
+      <Screen
+        contentContainerStyle={styles.content}
+        safeAreaEdges={['top', 'left', 'right']}
+        scroll
+      >
+        <PageHeader
+          description="Tendencias claras, sin puntos ni premios artificiales."
+          eyebrow="Bitácora"
+          title="Estadísticas"
+        />
+        <EmptyState
+          actionLabel={
+            hasProfileContent ? 'Ir a Hoy' : 'Crear mi primer elemento'
+          }
+          description={
+            hasProfileContent
+              ? 'Completa tu primera acción. Aquí aparecerán tus rachas y tendencias reales.'
+              : 'Crea un hábito, una tarea o una rutina para empezar a registrar tu progreso.'
+          }
+          icon={Route}
+          onAction={() =>
+            router.push(hasProfileContent ? '/(tabs)' : '/create')
+          }
+          title="Aún no hay progreso que analizar"
+        />
+        <View style={styles.bottomSpace} />
+      </Screen>
+    );
+  }
 
   return (
     <Screen
@@ -212,6 +283,13 @@ export function StatsScreen() {
 
 const styles = StyleSheet.create({
   content: { gap: 24, paddingBottom: 112, paddingTop: 12 },
+  loading: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 14,
+    justifyContent: 'center',
+    minHeight: 320,
+  },
   weekCard: { alignItems: 'center', flexDirection: 'row', gap: 18 },
   weekCopy: { flex: 1, gap: 5 },
   metrics: { flexDirection: 'row', gap: 10 },

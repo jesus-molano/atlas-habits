@@ -25,6 +25,10 @@ void SplashScreen.preventAutoHideAsync();
 
 function AtlasNavigator() {
   const theme = useTheme();
+  useEffect(() => {
+    void SplashScreen.hideAsync();
+  }, []);
+
   const navigationTheme = useMemo(
     () => ({
       ...(theme.isDark ? DarkTheme : DefaultTheme),
@@ -74,16 +78,12 @@ export default function RootLayout() {
     Manrope_700Bold,
   });
 
-  useEffect(() => {
-    if (fontsLoaded || fontError) void SplashScreen.hideAsync();
-  }, [fontError, fontsLoaded]);
-
   if (!fontsLoaded && !fontError) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AtlasThemeProvider defaultMode="dark">
+        <AtlasThemeProvider defaultMode="system">
           <AtlasAppProvider adapter={sqliteAtlasAppAdapter}>
             <AtlasNavigator />
           </AtlasAppProvider>

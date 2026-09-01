@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   createContext,
   useCallback,
@@ -24,6 +25,11 @@ type ThemeContextValue = {
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
+const THEME_MODE_STORAGE_KEY = 'atlas.settings.theme-mode';
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value === 'system' || value === 'light' || value === 'dark';
+}
 
 export type ThemeProviderProps = PropsWithChildren<{
   /** Uses system appearance unless a controlled `mode` is supplied. */
@@ -73,16 +79,41 @@ export function ThemeProvider({
 }: ThemeProviderProps) {
   const systemScheme = useColorScheme();
   const [internalMode, setInternalMode] = useState<ThemeMode>(defaultMode);
+  const [hasRestoredInternalMode, setHasRestoredInternalMode] = useState(false);
   const { highContrast, reduceMotion } = useAccessibilityPreferences();
   const mode = controlledMode ?? internalMode;
   const scheme: AtlasScheme =
     mode === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : mode;
+
+  useEffect(() => {
+    if (controlledMode !== undefined) return;
+
+    let active = true;
+
+    void AsyncStorage.getItem(THEME_MODE_STORAGE_KEY)
+      .then((storedMode) => {
+        if (active && isThemeMode(storedMode)) {
+          setInternalMode(storedMode);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setHasRestoredInternalMode(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [controlledMode]);
 
   const setMode = useCallback(
     (nextMode: ThemeMode) => {
       if (controlledMode === undefined) {
         setInternalMode(nextMode);
       }
+      void AsyncStorage.setItem(THEME_MODE_STORAGE_KEY, nextMode).catch(
+        () => undefined,
+      );
       onModeChange?.(nextMode);
     },
     [controlledMode, onModeChange],
@@ -97,6 +128,10 @@ export function ThemeProvider({
     () => ({ theme, mode, scheme, setMode }),
     [mode, scheme, setMode, theme],
   );
+
+  const hasRestoredMode =
+    controlledMode !== undefined || hasRestoredInternalMode;
+  if (!hasRestoredMode) return null;
 
   return (
     <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>

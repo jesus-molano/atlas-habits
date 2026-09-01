@@ -11,6 +11,9 @@ type SettingRowProps = {
   value?: string;
   onPress?: () => void;
   destructive?: boolean;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
+  disabled?: boolean;
 };
 
 export function SettingRow({
@@ -20,8 +23,13 @@ export function SettingRow({
   value,
   onPress,
   destructive = false,
+  accessibilityLabel,
+  accessibilityHint,
+  disabled = false,
 }: SettingRowProps) {
   const theme = useTheme();
+  const spokenLabel =
+    accessibilityLabel ?? [title, value].filter(Boolean).join(', ');
   const content = (
     <>
       <View
@@ -54,15 +62,30 @@ export function SettingRow({
     </>
   );
 
-  if (!onPress) return <View style={styles.row}>{content}</View>;
+  if (!onPress)
+    return (
+      <View
+        accessibilityHint={accessibilityHint ?? description}
+        accessibilityLabel={spokenLabel}
+        accessible
+        style={styles.row}
+      >
+        {content}
+      </View>
+    );
 
   return (
     <Pressable
+      accessibilityHint={accessibilityHint ?? description}
+      accessibilityLabel={spokenLabel}
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
-        pressed && { backgroundColor: theme.colors.surfaceMuted },
+        pressed && !disabled && { backgroundColor: theme.colors.surfaceMuted },
+        disabled && styles.disabled,
       ]}
     >
       {content}
@@ -88,4 +111,5 @@ const styles = StyleSheet.create({
     width: 42,
   },
   copy: { flex: 1, gap: 2 },
+  disabled: { opacity: 0.5 },
 });

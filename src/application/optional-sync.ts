@@ -17,6 +17,7 @@ import { SyncIntegrityError } from '../sync/errors';
 import { SQLiteSyncStore } from '../sync/sqlite-store';
 
 import { SerializedAsyncQueue } from './serial-queue';
+import { googleAccessFailure, initialSyncFailure } from './sync-error-copy';
 
 async function allDeviceOperations(
   repository: SyncRepository,
@@ -64,20 +65,17 @@ export class OptionalAtlasSync {
     } catch (error) {
       return {
         status: 'error',
-        message:
-          error instanceof Error
-            ? error.message
-            : 'No se pudo restaurar la cuenta.',
+        message: googleAccessFailure(error).message,
       };
     }
   }
 
   async connect(): Promise<AdapterActionResult> {
     if (this.provider.mode === 'local-only') {
-      const missing = this.provider.missingEnvironmentVariables.join(', ');
       return {
         ok: false,
-        message: `La sincronización opcional no está configurada en esta compilación (${missing}).`,
+        message:
+          'Esta versión no incluye la configuración necesaria para acceder con Google. Puedes seguir usando Atlas en modo local.',
       };
     }
     try {
@@ -93,21 +91,23 @@ export class OptionalAtlasSync {
           message:
             'Cuenta conectada. Los datos locales y remotos están sincronizados.',
         };
-      } catch {
+      } catch (error) {
+        const failure = initialSyncFailure(error);
+        if (!failure.retryable) {
+          await this.provider.auth.signOut().catch(() => undefined);
+          this.user = null;
+          return { ok: false, message: failure.message };
+        }
         return {
           ok: true,
           accountEmail: user.email ?? undefined,
-          message:
-            'Cuenta conectada. Los cambios quedan en cola hasta que vuelva la conexión.',
+          message: failure.message,
         };
       }
     } catch (error) {
       return {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : 'No se pudo acceder con Google.',
+        message: googleAccessFailure(error).message,
       };
     }
   }
@@ -124,13 +124,11 @@ export class OptionalAtlasSync {
         message:
           'Cuenta desconectada. Los datos locales se conservan en el dispositivo.',
       };
-    } catch (error) {
+    } catch {
       return {
         ok: false,
         message:
-          error instanceof Error
-            ? error.message
-            : 'No se pudo desconectar la cuenta.',
+          'No se pudo cerrar la sesión de Google. La copia local no se ha eliminado.',
       };
     }
   }

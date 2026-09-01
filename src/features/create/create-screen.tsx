@@ -39,6 +39,16 @@ import {
 } from '@/features/atlas';
 import { ChoiceChip, FormField } from '@/features/ui';
 
+import {
+  normalizeLocalDate,
+  normalizeLocalDateTime,
+  normalizeLocalTime,
+  parseNonNegativeInteger,
+  parsePositiveDecimal,
+  parsePositiveInteger,
+  suggestReminderTime,
+} from './form-validation';
+
 type CreateKind = CreateItemDraft['kind'];
 
 type DraftLine = {
@@ -230,9 +240,11 @@ function DraftLines({
 function ReminderLines({
   reminders,
   onChange,
+  timeErrors,
 }: {
   reminders: DraftReminder[];
   onChange: (reminders: DraftReminder[]) => void;
+  timeErrors: Readonly<Record<string, string | undefined>>;
 }) {
   const update = (id: string, patch: Partial<DraftReminder>) => {
     onChange(
@@ -259,7 +271,9 @@ function ReminderLines({
               ...reminders,
               {
                 id: draftId(),
-                time: '09:00',
+                time: suggestReminderTime(
+                  reminders.map((reminder) => reminder.time),
+                ),
                 enabled: true,
                 snoozeMinutes: 10,
               },
@@ -279,7 +293,11 @@ function ReminderLines({
           <View style={styles.twoColumns}>
             <View style={styles.column}>
               <FormField
+                autoCapitalize="none"
+                autoCorrect={false}
+                error={timeErrors[reminder.id]}
                 label={`Hora ${index + 1}`}
+                maxLength={5}
                 onChangeText={(time) => update(reminder.id, { time })}
                 placeholder="09:00"
                 value={reminder.time}
@@ -409,22 +427,150 @@ export function CreateScreen() {
       : [{ id: draftId(), title: '', required: true, minutes: '' }],
   );
   const [submitted, setSubmitted] = useState(false);
+  const hasScheduleEditor = kind === 'habit' || kind === 'routine' || recurring;
+  const normalizedDueDate = normalizeLocalDate(dueDate);
+  const normalizedDueTime = normalizeLocalTime(dueTime);
+  const normalizedDeadline = deadline.trim()
+    ? normalizeLocalDateTime(deadline)
+    : undefined;
+  const normalizedStartDate = normalizeLocalDate(scheduleStartDate);
+  const normalizedAnchorDate = normalizeLocalDate(intervalAnchor);
+  const intervalEveryValue = parsePositiveInteger(intervalEvery);
+  const quotaValue = parsePositiveInteger(quota);
+  const targetValue = metric === 'boolean' ? 1 : parsePositiveDecimal(target);
+  const graceMinutesValue = parseNonNegativeInteger(graceMinutes);
+  const reminderTimes = reminders.map((reminder) => ({
+    id: reminder.id,
+    time: normalizeLocalTime(reminder.time),
+  }));
+  const reminderTimeCounts = new Map<string, number>();
+  for (const { time } of reminderTimes) {
+    if (time)
+      reminderTimeCounts.set(time, (reminderTimeCounts.get(time) ?? 0) + 1);
+  }
+  const reminderTimeErrors = Object.fromEntries(
+    reminderTimes.map(({ id, time }) => [
+      id,
+      !submitted || !reminderEnabled
+        ? undefined
+        : !time
+          ? 'Usa HH:MM entre 00:00 y 23:59.'
+          : (reminderTimeCounts.get(time) ?? 0) > 1
+            ? 'Esta hora está repetida.'
+            : undefined,
+    ]),
+  );
+  const invalidReminder =
+    reminderEnabled &&
+    (reminders.length === 0 ||
+      reminderTimes.some(
+        ({ time }) => !time || (reminderTimeCounts.get(time) ?? 0) > 1,
+      ));
   const titleError =
     submitted && !title.trim() ? 'Escribe un nombre.' : undefined;
-  const validDueDate = /^\d{4}-\d{2}-\d{2}$/u.test(dueDate);
-  const validDueTime = /^([01]\d|2[0-3]):[0-5]\d$/u.test(dueTime);
   const dueDateError =
-    submitted && kind === 'task' && !validDueDate
-      ? 'Usa una fecha AAAA-MM-DD.'
+    submitted && kind === 'task' && !normalizedDueDate
+      ? 'Escribe una fecha real con formato AAAA-MM-DD.'
       : undefined;
   const dueTimeError =
-    submitted && kind === 'task' && !validDueTime
-      ? 'Usa una hora HH:MM.'
+    submitted && kind === 'task' && !normalizedDueTime
+      ? 'Usa HH:MM entre 00:00 y 23:59.'
+      : undefined;
+  const deadlineError =
+    submitted && kind === 'task' && deadline.trim() && !normalizedDeadline
+      ? 'Usa AAAA-MM-DD · HH:MM o déjalo vacío.'
+      : undefined;
+  const scheduleStartError =
+    submitted && hasScheduleEditor && !normalizedStartDate
+      ? 'Escribe una fecha real con formato AAAA-MM-DD.'
+      : undefined;
+  const weekdaysError =
+    submitted &&
+    hasScheduleEditor &&
+    scheduleKind === 'weekdays' &&
+    scheduleDays.length === 0
+      ? 'Selecciona al menos un día.'
+      : undefined;
+  const intervalEveryError =
+    submitted &&
+    hasScheduleEditor &&
+    scheduleKind === 'interval_days' &&
+    !intervalEveryValue
+      ? 'Escribe un número entero mayor que cero.'
+      : undefined;
+  const intervalAnchorError =
+    submitted &&
+    hasScheduleEditor &&
+    scheduleKind === 'interval_days' &&
+    !normalizedAnchorDate
+      ? 'Escribe una fecha real con formato AAAA-MM-DD.'
+      : undefined;
+  const quotaError =
+    submitted &&
+    hasScheduleEditor &&
+    scheduleKind === 'period_quota' &&
+    !quotaValue
+      ? 'Escribe un número entero mayor que cero.'
+      : undefined;
+  const targetError =
+    submitted && kind === 'habit' && metric !== 'boolean' && !targetValue
+      ? 'Escribe un objetivo mayor que cero.'
+      : undefined;
+  const graceMinutesError =
+    submitted && kind === 'habit' && graceMinutesValue === null
+      ? 'Escribe cero o un número entero positivo.'
       : undefined;
   const stepsError =
     submitted && kind === 'routine' && !steps.some((step) => step.title.trim())
       ? 'Añade al menos un paso.'
       : undefined;
+
+  const validationMessages = [
+    !title.trim() ? 'Escribe un nombre.' : undefined,
+    kind === 'task' && !normalizedDueDate
+      ? 'Revisa la fecha de la tarea.'
+      : undefined,
+    kind === 'task' && !normalizedDueTime
+      ? 'Revisa la hora de la tarea.'
+      : undefined,
+    kind === 'task' && deadline.trim() && !normalizedDeadline
+      ? 'Revisa la fecha límite.'
+      : undefined,
+    hasScheduleEditor && !normalizedStartDate
+      ? 'Revisa la fecha de inicio.'
+      : undefined,
+    hasScheduleEditor &&
+    scheduleKind === 'weekdays' &&
+    scheduleDays.length === 0
+      ? 'Selecciona al menos un día de repetición.'
+      : undefined,
+    hasScheduleEditor && scheduleKind === 'interval_days' && !intervalEveryValue
+      ? 'Revisa el intervalo de días.'
+      : undefined,
+    hasScheduleEditor &&
+    scheduleKind === 'interval_days' &&
+    !normalizedAnchorDate
+      ? 'Revisa la fecha de ancla.'
+      : undefined,
+    hasScheduleEditor && scheduleKind === 'period_quota' && !quotaValue
+      ? 'Revisa el número de veces de la cuota.'
+      : undefined,
+    kind === 'habit' && metric !== 'boolean' && !targetValue
+      ? 'Revisa el objetivo del hábito.'
+      : undefined,
+    kind === 'habit' && graceMinutesValue === null
+      ? 'Revisa el margen de cierre.'
+      : undefined,
+    kind === 'routine' && !steps.some((step) => step.title.trim())
+      ? 'Añade al menos un paso a la rutina.'
+      : undefined,
+    reminderEnabled && reminders.length === 0
+      ? 'Añade una hora de recordatorio o desactiva «Avisarme».'
+      : undefined,
+    invalidReminder && reminders.length > 0
+      ? 'Corrige las horas de recordatorio repetidas o no válidas.'
+      : undefined,
+  ].filter((message): message is string => Boolean(message));
 
   const submitLabel = useMemo(() => {
     if (existing) return 'Guardar cambios';
@@ -444,27 +590,25 @@ export function CreateScreen() {
     schedule: AtlasSchedule;
     reminders: AtlasReminder[];
   } => {
-    const activeReminders = (reminderEnabled ? reminders : [])
-      .filter((reminder) => /^([01]\d|2[0-3]):[0-5]\d$/u.test(reminder.time))
-      .map((reminder) => ({
+    const activeReminders = (reminderEnabled ? reminders : []).map(
+      (reminder) => ({
         ...reminder,
-        time: reminder.time.trim(),
+        time: normalizeLocalTime(reminder.time)!,
         label: reminder.label?.trim() || undefined,
         scheduleSlotId: reminder.scheduleSlotId ?? `slot-${reminder.id}`,
         enabled: true,
         snoozeMinutes: Math.max(1, reminder.snoozeMinutes || 10),
-      }));
+      }),
+    );
     const slots = activeReminders.map((reminder) => ({
       id: reminder.scheduleSlotId!,
       time: reminder.time,
       ...(reminder.label ? { label: reminder.label } : {}),
     }));
-    const startDate = /^\d{4}-\d{2}-\d{2}$/u.test(scheduleStartDate)
-      ? scheduleStartDate
-      : localDateToday();
+    const startDate = normalizedStartDate ?? localDateToday();
 
     if (kind === 'task' && !recurring) {
-      const date = /^\d{4}-\d{2}-\d{2}$/u.test(dueDate) ? dueDate : startDate;
+      const date = normalizedDueDate ?? startDate;
       return {
         schedule: { kind: 'once', date, startDate: date, slots },
         reminders: activeReminders,
@@ -479,10 +623,8 @@ export function CreateScreen() {
       case 'interval_days':
         schedule = {
           kind: 'interval_days',
-          every: Math.max(1, Math.round(Number(intervalEvery) || 1)),
-          anchorDate: /^\d{4}-\d{2}-\d{2}$/u.test(intervalAnchor)
-            ? intervalAnchor
-            : startDate,
+          every: intervalEveryValue ?? 1,
+          anchorDate: normalizedAnchorDate ?? startDate,
           startDate,
           slots,
         };
@@ -491,7 +633,7 @@ export function CreateScreen() {
         schedule = {
           kind: 'period_quota',
           period: quotaPeriod,
-          quota: Math.max(1, Math.round(Number(quota) || 1)),
+          quota: quotaValue ?? 1,
           weekStartsOn: 1,
           startDate,
           slots,
@@ -507,17 +649,16 @@ export function CreateScreen() {
 
   const save = () => {
     setSubmitted(true);
-    if (
-      !title.trim() ||
-      (kind === 'routine' && !steps.some((step) => step.title.trim())) ||
-      (kind === 'task' && (!validDueDate || !validDueTime))
-    )
+    const firstError = validationMessages[0];
+    if (firstError) {
+      Alert.alert('Revisa el formulario', firstError);
       return;
+    }
     const recurrence = buildSchedule();
     const common = {
-      title,
-      notes,
-      category,
+      title: title.trim(),
+      notes: notes.trim(),
+      category: category.trim(),
       tags: tags
         .split(',')
         .map((tag) => tag.trim())
@@ -534,37 +675,41 @@ export function CreateScreen() {
           metric === 'boolean'
             ? 1
             : metric === 'duration'
-              ? Math.max(1, Number(target) || 1) * 60
-              : Math.max(1, Number(target) || 1),
+              ? targetValue! * 60
+              : targetValue!,
         unit: metric === 'duration' ? 'segundos' : unit.trim() || 'veces',
-        graceMinutes: Math.max(0, Number(graceMinutes) || 0),
+        graceMinutes: graceMinutesValue!,
       });
     } else if (kind === 'task') {
       commit({
         ...common,
         kind,
         priority,
-        dueAt: [dueDate, dueTime].filter(Boolean).join(' · ') || undefined,
-        deadlineAt: deadline || undefined,
+        dueAt: `${normalizedDueDate!} · ${normalizedDueTime!}`,
+        deadlineAt: normalizedDeadline ?? undefined,
         recurring,
-        subtasks: subtasks.map((line) => ({
-          id: line.id,
-          title: line.title,
-          required: line.required,
-        })),
+        subtasks: subtasks
+          .filter((line) => line.title.trim())
+          .map((line) => ({
+            id: line.id,
+            title: line.title.trim(),
+            required: line.required,
+          })),
       });
     } else {
       commit({
         ...common,
         kind,
-        steps: steps.map((line) => ({
-          id: line.id,
-          title: line.title,
-          required: line.required,
-          durationSeconds: line.minutes
-            ? Math.max(0, Number(line.minutes) || 0) * 60
-            : undefined,
-        })),
+        steps: steps
+          .filter((line) => line.title.trim())
+          .map((line) => ({
+            id: line.id,
+            title: line.title.trim(),
+            required: line.required,
+            durationSeconds: line.minutes
+              ? Math.max(0, Number(line.minutes) || 0) * 60
+              : undefined,
+          })),
       });
     }
     router.back();
@@ -726,6 +871,7 @@ export function CreateScreen() {
                 <View style={styles.twoColumns}>
                   <View style={styles.column}>
                     <FormField
+                      error={targetError}
                       keyboardType="decimal-pad"
                       label={
                         metric === 'duration'
@@ -750,6 +896,7 @@ export function CreateScreen() {
                 </View>
               ) : null}
               <FormField
+                error={graceMinutesError}
                 hint="Durante este margen aún puedes registrarlo sin que el día cuente como perdido."
                 keyboardType="number-pad"
                 label="Margen de cierre (minutos)"
@@ -803,6 +950,7 @@ export function CreateScreen() {
                 </View>
               </View>
               <FormField
+                error={deadlineError}
                 hint="Opcional. Puede ser distinta de la hora programada."
                 label="Fecha límite"
                 onChangeText={setDeadline}
@@ -865,6 +1013,7 @@ export function CreateScreen() {
                 />
               </View>
               <FormField
+                error={scheduleStartError}
                 hint="La recurrencia no crea ocurrencias antes de esta fecha."
                 label="Empieza el"
                 onChangeText={setScheduleStartDate}
@@ -872,29 +1021,37 @@ export function CreateScreen() {
                 value={scheduleStartDate}
               />
               {scheduleKind === 'weekdays' ? (
-                <View accessibilityRole="radiogroup" style={styles.choices}>
-                  {weekdays.map(({ day, label }) => (
-                    <ChoiceChip
-                      key={day}
-                      label={label}
-                      onPress={() =>
-                        setScheduleDays((current) =>
-                          current.includes(day)
-                            ? current.filter((value) => value !== day)
-                            : [...current, day].sort(
-                                (left, right) => left - right,
-                              ),
-                        )
-                      }
-                      selected={scheduleDays.includes(day)}
-                    />
-                  ))}
-                </View>
+                <>
+                  <View accessibilityRole="radiogroup" style={styles.choices}>
+                    {weekdays.map(({ day, label }) => (
+                      <ChoiceChip
+                        key={day}
+                        label={label}
+                        onPress={() =>
+                          setScheduleDays((current) =>
+                            current.includes(day)
+                              ? current.filter((value) => value !== day)
+                              : [...current, day].sort(
+                                  (left, right) => left - right,
+                                ),
+                          )
+                        }
+                        selected={scheduleDays.includes(day)}
+                      />
+                    ))}
+                  </View>
+                  {weekdaysError ? (
+                    <Text tone="danger" variant="caption">
+                      {weekdaysError}
+                    </Text>
+                  ) : null}
+                </>
               ) : null}
               {scheduleKind === 'interval_days' ? (
                 <View style={styles.twoColumns}>
                   <View style={styles.column}>
                     <FormField
+                      error={intervalEveryError}
                       keyboardType="number-pad"
                       label="Cada cuántos días"
                       onChangeText={setIntervalEvery}
@@ -904,6 +1061,7 @@ export function CreateScreen() {
                   </View>
                   <View style={styles.column}>
                     <FormField
+                      error={intervalAnchorError}
                       label="Fecha de ancla"
                       onChangeText={setIntervalAnchor}
                       placeholder="AAAA-MM-DD"
@@ -927,6 +1085,7 @@ export function CreateScreen() {
                     />
                   </View>
                   <FormField
+                    error={quotaError}
                     hint="Las distintas horas no multiplican esta cuota."
                     keyboardType="number-pad"
                     label="Número de veces"
@@ -951,7 +1110,18 @@ export function CreateScreen() {
               value={reminderEnabled}
             />
             {reminderEnabled ? (
-              <ReminderLines reminders={reminders} onChange={setReminders} />
+              <>
+                <ReminderLines
+                  reminders={reminders}
+                  timeErrors={reminderTimeErrors}
+                  onChange={setReminders}
+                />
+                {submitted && reminders.length === 0 ? (
+                  <Text tone="danger" variant="caption">
+                    Añade al menos una hora o desactiva «Avisarme».
+                  </Text>
+                ) : null}
+              </>
             ) : null}
           </View>
           <View style={styles.scrollBottom} />

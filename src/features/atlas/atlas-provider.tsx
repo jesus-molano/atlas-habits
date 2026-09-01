@@ -12,11 +12,13 @@ import {
 import { AppState } from 'react-native';
 
 import {
+  invokeOptionalAdapterAction,
   readSnapshotForProvider,
   SnapshotApplyGuard,
+  type AtlasAdapterActionName,
   type ProviderSnapshotRead,
 } from './atlas-provider-runtime';
-import { createFallbackSnapshot } from './fallback-data';
+import { createEmptySnapshot } from './empty-snapshot';
 import {
   createDefaultSchedule,
   expectedCompletions,
@@ -25,6 +27,10 @@ import {
   normalizeSchedule,
   scheduleLabel,
 } from './schedule';
+import {
+  toggleTaskCompletion,
+  toggleTaskSubtaskCompletion,
+} from './task-completion';
 import type {
   AdapterActionResult,
   AtlasAppAdapter,
@@ -250,9 +256,7 @@ export function AtlasAppProvider({
   adapter = defaultAdapter,
   children,
 }: AtlasAppProviderProps) {
-  const [snapshot, setSnapshot] = useState<AtlasSnapshot>(
-    createFallbackSnapshot,
-  );
+  const [snapshot, setSnapshot] = useState<AtlasSnapshot>(createEmptySnapshot);
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const [hydrated, setHydrated] = useState(false);
   const adapterRef = useRef(adapter);
@@ -282,12 +286,12 @@ export function AtlasAppProvider({
       try {
         const stored = await adapter.loadSnapshot();
         if (!mounted || !applyGuard.canApply(token)) return;
-        const next = stored ?? createFallbackSnapshot();
+        const next = stored ?? createEmptySnapshot();
         setSnapshot(next);
         if (!stored) await adapter.saveSnapshot(next);
       } catch {
         if (!mounted || !applyGuard.canApply(token)) return;
-        setSnapshot(createFallbackSnapshot());
+        setSnapshot(createEmptySnapshot());
       } finally {
         if (mounted) setHydrated(true);
       }
@@ -516,7 +520,7 @@ export function AtlasAppProvider({
       persist((current) => ({
         ...current,
         tasks: current.tasks.map((task) =>
-          task.id === id ? { ...task, completed: !task.completed } : task,
+          task.id === id ? toggleTaskCompletion(task) : task,
         ),
       }));
     },
@@ -529,19 +533,7 @@ export function AtlasAppProvider({
         ...current,
         tasks: current.tasks.map((task) => {
           if (task.id !== taskId) return task;
-          const subtasks = task.subtasks.map((subtask) =>
-            subtask.id === subtaskId
-              ? { ...subtask, completed: !subtask.completed }
-              : subtask,
-          );
-          const required = subtasks.filter((subtask) => subtask.required);
-          return {
-            ...task,
-            subtasks,
-            completed:
-              required.length > 0 &&
-              required.every((subtask) => subtask.completed),
-          };
+          return toggleTaskSubtaskCompletion(task, subtaskId);
         }),
       }));
     },
@@ -831,52 +823,56 @@ export function AtlasAppProvider({
 
   const runAdapterAction = useCallback(
     async (
-      action: keyof Pick<
-        AtlasAppAdapter,
-        | 'connectGoogle'
-        | 'disconnectGoogle'
-        | 'requestNotificationAccess'
-        | 'requestExactAlarmAccess'
-        | 'checkForUpdate'
-      >,
+      action: AtlasAdapterActionName,
       unavailableLabel: string,
     ): Promise<AdapterActionResult> => {
-      const handler = adapterRef.current[action];
-      if (!handler) return adapterUnavailable(unavailableLabel);
-      return handler();
+      return invokeOptionalAdapterAction(adapterRef.current, action, () =>
+        adapterUnavailable(unavailableLabel),
+      );
     },
     [],
   );
 
+  const setSyncState = useCallback((sync: AtlasSnapshot['sync']) => {
+    snapshotApplyGuardRef.current.markOptimisticMutation();
+    setSnapshot((current) => ({ ...current, sync }));
+  }, []);
+
   const connectGoogle = useCallback(async () => {
-    persist((current) => ({
-      ...current,
-      sync: { status: 'connecting' },
-    }));
-    const result = await runAdapterAction(
-      'connectGoogle',
-      'El acceso con Google',
-    );
-    persist((current) => ({
-      ...current,
-      sync: result.ok
-        ? {
-            status: 'connected',
-            accountEmail: result.accountEmail,
-            message: result.message,
-          }
-        : { status: 'error', message: result.message },
-    }));
-    return result;
-  }, [persist, runAdapterAction]);
+    setSyncState({ status: 'connecting' });
+    try {
+      const result = await runAdapterAction(
+        'connectGoogle',
+        'El acceso con Google',
+      );
+      setSyncState(
+        result.ok
+          ? {
+              status: 'connected',
+              accountEmail: result.accountEmail,
+              message: result.message,
+            }
+          : { status: 'local-only', message: result.message },
+      );
+      return result;
+    } catch {
+      const result = {
+        ok: false,
+        message:
+          'No se pudo iniciar sesión con Google. Tus datos siguen guardados en este dispositivo.',
+      };
+      setSyncState({ status: 'local-only', message: result.message });
+      return result;
+    }
+  }, [runAdapterAction, setSyncState]);
 
   const disconnectGoogle = useCallback(async () => {
     const result = await runAdapterAction('disconnectGoogle', 'La desconexión');
     if (result.ok) {
-      persist((current) => ({ ...current, sync: { status: 'local-only' } }));
+      setSyncState({ status: 'local-only' });
     }
     return result;
-  }, [persist, runAdapterAction]);
+  }, [runAdapterAction, setSyncState]);
 
   const progress = useMemo(() => {
     const selectedHabits = habitsForDate(snapshot, selectedDate);
