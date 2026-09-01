@@ -1,3 +1,4 @@
+import type { SyncIssue } from '../features/atlas/types';
 import {
   SyncAuthenticationError,
   SyncConflictError,
@@ -21,6 +22,21 @@ export type SyncFailureDescription = Readonly<{
   retryable: boolean;
   message: string;
 }>;
+
+function remediationFor(kind: SyncFailureKind): SyncIssue['remediation'] {
+  if (kind === 'network') return 'network';
+  if (
+    kind === 'google-provider-disabled' ||
+    kind === 'credentials-configuration'
+  ) {
+    return 'google-config';
+  }
+  if (kind === 'firestore-permission' || kind === 'firestore-setup') {
+    return 'firestore-access';
+  }
+  if (kind === 'unknown') return 'retry';
+  return 'none';
+}
 
 function textProperty(value: unknown, key: string): string | undefined {
   if (typeof value !== 'object' || value === null || !(key in value)) {
@@ -202,7 +218,7 @@ export function initialSyncFailure(error: unknown): SyncFailureDescription {
         kind,
         retryable: false,
         message:
-          'Firebase ha rechazado la sincronización. Comprueba que Firestore esté creado y que sus reglas de seguridad estén publicadas. Tus datos locales siguen intactos.',
+          'Firestore ha rechazado el acceso de esta cuenta. Comprueba que has iniciado sesión con la cuenta prevista y que las reglas de seguridad permiten acceder a sus propios datos. Tus datos locales siguen intactos.',
       };
     case 'firestore-setup':
       return {
@@ -230,4 +246,18 @@ export function initialSyncFailure(error: unknown): SyncFailureDescription {
           'No se pudo completar la primera sincronización. No se ha activado y tus datos locales siguen intactos.',
       };
   }
+}
+
+export function syncIssueFor(error: unknown): Readonly<{
+  failure: SyncFailureDescription;
+  issue: SyncIssue;
+}> {
+  const failure = initialSyncFailure(error);
+  return {
+    failure,
+    issue: {
+      kind: failure.kind,
+      remediation: remediationFor(failure.kind),
+    },
+  };
 }

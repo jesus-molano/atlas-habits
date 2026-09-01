@@ -8,7 +8,7 @@ export type Migration = Readonly<{
   sql: string;
 }>;
 
-export const DATABASE_VERSION = 4;
+export const DATABASE_VERSION = 6;
 
 export const migrations: readonly Migration[] = [
   {
@@ -333,7 +333,7 @@ export const migrations: readonly Migration[] = [
         local_time TEXT
           CHECK(local_time IS NULL OR (length(local_time) = 5 AND substr(local_time, 3, 1) = ':')),
         offset_minutes INTEGER NOT NULL DEFAULT 0,
-        exact_alarm INTEGER NOT NULL DEFAULT 1 CHECK(exact_alarm IN (0, 1)),
+        exact_alarm INTEGER NOT NULL DEFAULT 0 CHECK(exact_alarm IN (0, 1)),
         allow_complete INTEGER NOT NULL DEFAULT 1 CHECK(allow_complete IN (0, 1)),
         allow_snooze INTEGER NOT NULL DEFAULT 1 CHECK(allow_snooze IN (0, 1)),
         snooze_minutes INTEGER NOT NULL DEFAULT 10 CHECK(snooze_minutes > 0),
@@ -479,6 +479,57 @@ export const migrations: readonly Migration[] = [
         last_hlc TEXT,
         updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
         PRIMARY KEY(workspace_id, remote_name, device_id)
+      ) WITHOUT ROWID;
+    `,
+  },
+  {
+    version: 5,
+    name: 'global_active_timer',
+    sql: `
+      CREATE TABLE active_timer (
+        workspace_id TEXT PRIMARY KEY NOT NULL
+          REFERENCES workspaces(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        started_at INTEGER NOT NULL CHECK(started_at >= 0),
+        running_since INTEGER CHECK(running_since IS NULL OR running_since >= started_at),
+        elapsed_seconds INTEGER NOT NULL DEFAULT 0 CHECK(elapsed_seconds >= 0),
+        created_at INTEGER NOT NULL CHECK(created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK(updated_at >= created_at)
+      );
+      CREATE INDEX active_timer_item_id ON active_timer(item_id);
+
+      INSERT INTO active_timer
+        (workspace_id, item_id, started_at, running_since, elapsed_seconds, created_at, updated_at)
+      SELECT i.workspace_id, h.item_id, h.timer_started_at, h.timer_started_at, 0,
+             h.timer_started_at, h.timer_started_at
+        FROM habits h
+        JOIN items i ON i.id = h.item_id
+       WHERE h.timer_started_at IS NOT NULL
+         AND i.archived_at IS NULL
+         AND i.deleted_at IS NULL
+         AND (SELECT COUNT(*)
+                FROM habits active_habit
+                JOIN items active_item ON active_item.id = active_habit.item_id
+               WHERE active_habit.timer_started_at IS NOT NULL
+                 AND active_item.archived_at IS NULL
+                 AND active_item.deleted_at IS NULL) = 1
+       LIMIT 1;
+
+      UPDATE habits
+         SET timer_started_at = NULL
+       WHERE EXISTS (SELECT 1 FROM active_timer);
+    `,
+  },
+  {
+    version: 6,
+    name: 'active_timer_daily_segments',
+    sql: `
+      CREATE TABLE active_timer_segments (
+        workspace_id TEXT NOT NULL
+          REFERENCES active_timer(workspace_id) ON DELETE CASCADE,
+        local_date TEXT NOT NULL CHECK(length(local_date) = 10),
+        elapsed_seconds INTEGER NOT NULL CHECK(elapsed_seconds > 0),
+        PRIMARY KEY(workspace_id, local_date)
       ) WITHOUT ROWID;
     `,
   },

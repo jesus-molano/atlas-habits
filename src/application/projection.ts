@@ -50,9 +50,9 @@ import {
 } from './date-time';
 
 const DEFAULT_DASHBOARD_ORDER: DashboardSectionId[] = [
-  'routines',
   'habits',
   'tasks',
+  'routines',
 ];
 
 export type AtlasProjectionRelations = Readonly<{
@@ -264,6 +264,7 @@ function projectedReminders(
             id: entry.id,
             time: entry.localTime,
             enabled: entry.enabled,
+            exactAlarm: entry.exactAlarm,
             snoozeMinutes: entry.snoozeMinutes,
           },
         ]
@@ -680,6 +681,24 @@ function historyRatio(
   return total === 0 ? 0 : completed / total;
 }
 
+function focusSeconds(day: DashboardSnapshot): number {
+  const trackableIds = new Set(
+    day.items
+      .filter((item) => {
+        if (item.type === 'task') return true;
+        if (item.type !== 'habit') return false;
+        return parseObject(item.subtypeJson).measurementType === 'duration';
+      })
+      .map((item) => item.id),
+  );
+  return Math.round(
+    [...trackableIds].reduce(
+      (total, itemId) => total + reduceMeasurements(day.measurements, itemId),
+      0,
+    ),
+  );
+}
+
 function habitStreak(
   itemId: string,
   days: readonly DashboardSnapshot[],
@@ -949,6 +968,7 @@ export function mapDashboardToAtlasSnapshot(
     history: historyDays.map((day) => ({
       date: day.localDate,
       ratio: historyRatio(day, today, input.now, historyDays),
+      focusSeconds: focusSeconds(day),
     })),
     habitHistory,
     sync: relations.sync ?? { status: 'local-only' },

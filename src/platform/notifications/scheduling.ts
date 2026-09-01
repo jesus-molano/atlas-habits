@@ -20,10 +20,11 @@ export interface OneShotReminderInput {
   readonly body?: string;
   readonly fireAt: Date;
   readonly snoozeMinutes?: number;
+  readonly exactAlarm?: boolean;
 }
 
 /**
- * Schedules exactly one alarm. Recurrence expansion belongs to the application
+ * Schedules one notification. Recurrence expansion belongs to the application
  * layer, which can create the next single-shot occurrence after this one fires.
  */
 export async function scheduleOneShotReminderAsync(
@@ -34,7 +35,7 @@ export async function scheduleOneShotReminderAsync(
     throw new RangeError('fireAt must be in the future.');
   }
 
-  await assertExactAlarmAccessAsync();
+  if (input.exactAlarm === true) await assertExactAlarmAccessAsync();
 
   return Notifications.scheduleNotificationAsync({
     identifier: input.notificationId,

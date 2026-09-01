@@ -37,6 +37,8 @@ export type AtlasReminder = {
   label?: string;
   scheduleSlotId?: string;
   enabled: boolean;
+  /** Exact alarms require explicit Android special access. New rules are flexible. */
+  exactAlarm?: boolean;
   snoozeMinutes: number;
 };
 
@@ -113,7 +115,38 @@ export type AtlasItem = HabitItem | TaskItem | RoutineItem;
 export type HistoryDay = {
   date: string;
   ratio: number;
+  focusSeconds: number;
 };
+
+export type ActiveTimerState = Readonly<{
+  itemId: string;
+  itemType: 'habit' | 'task';
+  title: string;
+  startedAt: number;
+  runningSince?: number;
+  elapsedSeconds: number;
+}>;
+
+export type ReminderCapability = Readonly<{
+  masterEnabled: boolean;
+  notifications: 'granted' | 'askable' | 'blocked' | 'not-applicable';
+  exactAlarms: 'granted' | 'needs-settings' | 'not-applicable';
+}>;
+
+export type SyncIssue = Readonly<{
+  kind:
+    | 'cancelled'
+    | 'network'
+    | 'google-provider-disabled'
+    | 'credentials-configuration'
+    | 'firestore-permission'
+    | 'firestore-setup'
+    | 'account-not-authorized'
+    | 'remote-integrity'
+    | 'unknown';
+  remediation:
+    'retry' | 'network' | 'google-config' | 'firestore-access' | 'none';
+}>;
 
 export type HabitDayRecord = {
   value: number;
@@ -127,6 +160,7 @@ export type SyncState = {
   status: 'local-only' | 'connecting' | 'connected' | 'error';
   accountEmail?: string;
   message?: string;
+  issue?: SyncIssue;
 };
 
 export type AtlasSnapshot = {
@@ -138,6 +172,9 @@ export type AtlasSnapshot = {
   history: HistoryDay[];
   habitHistory: Record<string, Record<string, HabitDayRecord>>;
   sync: SyncState;
+  activeTimer?: ActiveTimerState;
+  legacyTimerItemIds?: string[];
+  reminderCapability?: ReminderCapability;
   source: 'local_store' | 'external_service';
 };
 
@@ -193,6 +230,15 @@ export type AdapterActionResult = {
   ok: boolean;
   message: string;
   accountEmail?: string;
+  code?:
+    | 'settings-opened'
+    | 'permission-denied'
+    | 'storage-failed'
+    | 'reminder-reconcile-failed'
+    | 'already-active'
+    | 'invalid-target'
+    | 'unavailable';
+  syncIssue?: SyncIssue;
 };
 
 /**
@@ -203,11 +249,23 @@ export type AtlasAppAdapter = {
   loadSnapshot(): Promise<AtlasSnapshot | null>;
   /** Pure canonical read. It must not start sync or platform maintenance. */
   refreshSnapshot?(): Promise<AtlasSnapshot | null>;
-  saveSnapshot(snapshot: AtlasSnapshot): Promise<void>;
+  saveSnapshot(snapshot: AtlasSnapshot, localDate?: string): Promise<void>;
   subscribeToSnapshotInvalidations?(listener: () => void): () => void;
   connectGoogle?(): Promise<AdapterActionResult>;
   disconnectGoogle?(): Promise<AdapterActionResult>;
   requestNotificationAccess?(): Promise<AdapterActionResult>;
   requestExactAlarmAccess?(): Promise<AdapterActionResult>;
+  setRemindersEnabled?(enabled: boolean): Promise<AdapterActionResult>;
+  startTimer?(itemId: string): Promise<AdapterActionResult>;
+  pauseTimer?(): Promise<AdapterActionResult>;
+  resumeTimer?(): Promise<AdapterActionResult>;
+  stopTimer?(localDate: string): Promise<AdapterActionResult>;
+  cancelTimer?(): Promise<AdapterActionResult>;
+  recordManualDuration?(
+    itemId: string,
+    seconds: number,
+    localDate: string,
+  ): Promise<AdapterActionResult>;
+  resolveLegacyTimers?(itemId: string | null): Promise<AdapterActionResult>;
   checkForUpdate?(): Promise<AdapterActionResult>;
 };

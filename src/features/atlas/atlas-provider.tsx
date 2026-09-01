@@ -139,6 +139,10 @@ function upgradeStoredSnapshot(snapshot: AtlasSnapshot): AtlasSnapshot {
     habits: snapshot.habits.map(upgrade),
     tasks: snapshot.tasks.map(upgrade),
     routines: snapshot.routines.map(upgrade),
+    history: snapshot.history.map((day) => ({
+      ...day,
+      focusSeconds: day.focusSeconds ?? 0,
+    })),
   };
 }
 
@@ -188,8 +192,21 @@ export type AtlasAppContextValue = {
   pauseHabit(id: string, pauseUntil?: string): void;
   resumeHabit(id: string): void;
   setSelectedDate(date: string): void;
-  startHabitTimer(id: string): void;
-  stopHabitTimer(id: string): void;
+  timerSheetOpen: boolean;
+  openTimerSheet(itemId?: string): void;
+  closeTimerSheet(): void;
+  startTimer(itemId: string): Promise<AdapterActionResult>;
+  pauseTimer(): Promise<AdapterActionResult>;
+  resumeTimer(): Promise<AdapterActionResult>;
+  stopTimer(localDate?: string): Promise<AdapterActionResult>;
+  cancelTimer(): Promise<AdapterActionResult>;
+  recordManualDuration(
+    itemId: string,
+    seconds: number,
+    localDate?: string,
+  ): Promise<AdapterActionResult>;
+  resolveLegacyTimers(itemId: string | null): Promise<AdapterActionResult>;
+  timerTargetId?: string;
   toggleTask(id: string): void;
   toggleSubtask(taskId: string, subtaskId: string): void;
   createItem(draft: CreateItemDraft): string;
@@ -204,6 +221,7 @@ export type AtlasAppContextValue = {
   disconnectGoogle(): Promise<AdapterActionResult>;
   requestNotificationAccess(): Promise<AdapterActionResult>;
   requestExactAlarmAccess(): Promise<AdapterActionResult>;
+  setRemindersEnabled(enabled: boolean): Promise<AdapterActionResult>;
   checkForUpdate(): Promise<AdapterActionResult>;
 };
 
@@ -236,8 +254,10 @@ function updateHistoryForDate(
   const ratio = total === 0 ? 0 : completed / total;
   const existing = snapshot.history.findIndex((day) => day.date === date);
   const history = [...snapshot.history];
-  if (existing >= 0) history[existing] = { date, ratio };
-  else history.push({ date, ratio });
+  const focusSeconds =
+    existing >= 0 ? (history[existing]?.focusSeconds ?? 0) : 0;
+  if (existing >= 0) history[existing] = { date, ratio, focusSeconds };
+  else history.push({ date, ratio, focusSeconds });
   return { ...snapshot, history };
 }
 
@@ -259,8 +279,12 @@ export function AtlasAppProvider({
   const [snapshot, setSnapshot] = useState<AtlasSnapshot>(createEmptySnapshot);
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const [hydrated, setHydrated] = useState(false);
+  const [timerSheetOpen, setTimerSheetOpen] = useState(false);
+  const [timerTargetId, setTimerTargetId] = useState<string | undefined>();
   const adapterRef = useRef(adapter);
   const snapshotApplyGuardRef = useRef(new SnapshotApplyGuard());
+  const optimisticMutationGenerationRef = useRef(0);
+  const adapterRefreshGenerationRef = useRef(0);
 
   useEffect(() => {
     adapterRef.current = adapter;
@@ -326,9 +350,10 @@ export function AtlasAppProvider({
       historyDate = selectedDate,
     ) => {
       snapshotApplyGuardRef.current.markOptimisticMutation();
+      optimisticMutationGenerationRef.current += 1;
       setSnapshot((current) => {
         const next = updateHistoryForDate(updater(current), historyDate);
-        if (hydrated) void adapterRef.current.saveSnapshot(next);
+        if (hydrated) void adapterRef.current.saveSnapshot(next, historyDate);
         return next;
       });
     },
@@ -479,41 +504,53 @@ export function AtlasAppProvider({
     [persist],
   );
 
-  const startHabitTimer = useCallback(
-    (id: string) => {
-      persist((current) => ({
-        ...current,
-        habits: current.habits.map((habit) =>
-          habit.id === id ? { ...habit, timerStartedAt: Date.now() } : habit,
-        ),
-      }));
+  const refreshAfterAdapterMutation = useCallback(async () => {
+    const refresh = adapterRef.current.refreshSnapshot;
+    if (!refresh) return;
+    const optimisticGeneration = optimisticMutationGenerationRef.current;
+    const refreshGeneration = ++adapterRefreshGenerationRef.current;
+    const stored = await refresh();
+    if (
+      stored &&
+      optimisticGeneration === optimisticMutationGenerationRef.current &&
+      refreshGeneration === adapterRefreshGenerationRef.current
+    ) {
+      snapshotApplyGuardRef.current.cancelPendingRequests();
+      setSnapshot(stored);
+    }
+  }, []);
+
+  const runTimerAction = useCallback(
+    async (
+      action:
+        | 'startTimer'
+        | 'pauseTimer'
+        | 'resumeTimer'
+        | 'stopTimer'
+        | 'cancelTimer'
+        | 'recordManualDuration'
+        | 'resolveLegacyTimers',
+      args: readonly unknown[] = [],
+    ): Promise<AdapterActionResult> => {
+      const method = adapterRef.current[action] as
+        ((...values: never[]) => Promise<AdapterActionResult>) | undefined;
+      if (!method) return adapterUnavailable('El cronómetro');
+      const result = await method.apply(adapterRef.current, args as never[]);
+      await refreshAfterAdapterMutation().catch(() => undefined);
+      return result;
     },
-    [persist],
+    [refreshAfterAdapterMutation],
   );
 
-  const stopHabitTimer = useCallback(
-    (id: string) => {
-      persist((current) => ({
-        ...current,
-        habits: current.habits.map((habit) => {
-          if (habit.id !== id || habit.timerStartedAt === undefined)
-            return habit;
-          const elapsed = Math.max(
-            1,
-            Math.round((Date.now() - habit.timerStartedAt) / 1_000),
-          );
-          const value = habit.value + elapsed;
-          return {
-            ...habit,
-            value,
-            completed: value >= habit.target,
-            timerStartedAt: undefined,
-          };
-        }),
-      }));
-    },
-    [persist],
-  );
+  const openTimerSheet = useCallback((itemId?: string) => {
+    setTimerTargetId(itemId);
+    setTimerSheetOpen(true);
+  }, []);
+
+  const closeTimerSheet = useCallback(() => {
+    setTimerSheetOpen(false);
+    setTimerTargetId(undefined);
+  }, []);
 
   const toggleTask = useCallback(
     (id: string) => {
@@ -835,6 +872,7 @@ export function AtlasAppProvider({
 
   const setSyncState = useCallback((sync: AtlasSnapshot['sync']) => {
     snapshotApplyGuardRef.current.markOptimisticMutation();
+    optimisticMutationGenerationRef.current += 1;
     setSnapshot((current) => ({ ...current, sync }));
   }, []);
 
@@ -851,8 +889,13 @@ export function AtlasAppProvider({
               status: 'connected',
               accountEmail: result.accountEmail,
               message: result.message,
+              issue: result.syncIssue,
             }
-          : { status: 'local-only', message: result.message },
+          : {
+              status: 'error',
+              message: result.message,
+              issue: result.syncIssue,
+            },
       );
       return result;
     } catch {
@@ -918,8 +961,20 @@ export function AtlasAppProvider({
       pauseHabit,
       resumeHabit,
       setSelectedDate,
-      startHabitTimer,
-      stopHabitTimer,
+      timerSheetOpen,
+      timerTargetId,
+      openTimerSheet,
+      closeTimerSheet,
+      startTimer: (itemId) => runTimerAction('startTimer', [itemId]),
+      pauseTimer: () => runTimerAction('pauseTimer'),
+      resumeTimer: () => runTimerAction('resumeTimer'),
+      stopTimer: (localDate = selectedDate) =>
+        runTimerAction('stopTimer', [localDate]),
+      cancelTimer: () => runTimerAction('cancelTimer'),
+      recordManualDuration: (itemId, seconds, localDate = selectedDate) =>
+        runTimerAction('recordManualDuration', [itemId, seconds, localDate]),
+      resolveLegacyTimers: (itemId) =>
+        runTimerAction('resolveLegacyTimers', [itemId]),
       toggleTask,
       toggleSubtask,
       createItem,
@@ -936,6 +991,13 @@ export function AtlasAppProvider({
         runAdapterAction('requestNotificationAccess', 'Los recordatorios'),
       requestExactAlarmAccess: () =>
         runAdapterAction('requestExactAlarmAccess', 'Las alarmas exactas'),
+      setRemindersEnabled: async (enabled) => {
+        const method = adapterRef.current.setRemindersEnabled;
+        if (!method) return adapterUnavailable('Los recordatorios');
+        const result = await method.call(adapterRef.current, enabled);
+        await refreshAfterAdapterMutation().catch(() => undefined);
+        return result;
+      },
       checkForUpdate: () =>
         runAdapterAction('checkForUpdate', 'Las actualizaciones'),
     }),
@@ -959,9 +1021,13 @@ export function AtlasAppProvider({
       selectedHabits,
       skipHabit,
       snapshot,
-      startHabitTimer,
+      closeTimerSheet,
+      openTimerSheet,
+      refreshAfterAdapterMutation,
+      runTimerAction,
       startRoutine,
-      stopHabitTimer,
+      timerSheetOpen,
+      timerTargetId,
       toggleHabit,
       toggleSubtask,
       toggleTask,

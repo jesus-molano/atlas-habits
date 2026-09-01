@@ -1,21 +1,12 @@
-import DateTimePicker, {
-  type DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
-import {
-  ArrowDown,
-  ArrowUp,
-  CalendarDays,
-  Map,
-  Settings2,
-} from 'lucide-react-native';
-import { useMemo, useState, type ReactNode } from 'react';
+import { CalendarDays, Map, Plus, Timer } from 'lucide-react-native';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -23,27 +14,19 @@ import {
   Button,
   Card,
   EmptyState,
-  IconButton,
-  ProgressOrbit,
   Screen,
   SectionHeader,
   Text,
 } from '@/components/core';
-import { useTheme } from '@/design';
 import {
-  isScheduledOnDate,
-  useAtlasApp,
-  type DashboardSectionId,
-} from '@/features/atlas';
+  AtlasCalendarSheet,
+  FeedbackSheet,
+} from '@/components/core/feedback-overlay';
+import { useTheme } from '@/design';
+import { isScheduledOnDate, useAtlasApp } from '@/features/atlas';
 import { PageHeader } from '@/features/ui';
 
 import { HabitCard, RoutineCard, TaskCard } from './item-cards';
-
-const sectionNames: Record<DashboardSectionId, string> = {
-  routines: 'Rutinas',
-  habits: 'Hábitos',
-  tasks: 'Tareas',
-};
 
 function capitalize(value: string): string {
   return value.charAt(0).toLocaleUpperCase('es') + value.slice(1);
@@ -64,20 +47,35 @@ function TodayDateStrip({
   onSelect: (date: string) => void;
 }) {
   const theme = useTheme();
-  const days = useMemo(
-    () =>
-      Array.from({ length: 7 }, (_, index) => {
-        const date = new Date();
-        date.setDate(date.getDate() + index - 6);
-        return date;
-      }),
-    [],
+  const { fontScale } = useWindowDimensions();
+  const stripRef = useRef<ScrollView>(null);
+  const initialScrollComplete = useRef(false);
+  const dateCellHeight = Math.round(
+    64 + Math.max(0, Math.min(fontScale, 2) - 1) * 32,
   );
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() + index - 6);
+    return date;
+  });
   return (
-    <View accessibilityRole="tablist" style={styles.dateStrip}>
+    <ScrollView
+      accessibilityRole="tablist"
+      contentContainerStyle={styles.dateStrip}
+      horizontal
+      keyboardShouldPersistTaps="handled"
+      onContentSizeChange={() => {
+        if (initialScrollComplete.current) return;
+        initialScrollComplete.current = true;
+        stripRef.current?.scrollToEnd({ animated: false });
+      }}
+      ref={stripRef}
+      showsHorizontalScrollIndicator={false}
+      style={[styles.dateStripViewport, { height: dateCellHeight }]}
+    >
       {days.map((date) => {
-        const dateKey = localDateKey(date);
-        const selected = dateKey === selectedDate;
+        const key = localDateKey(date);
+        const selected = key === selectedDate;
         return (
           <Pressable
             accessibilityLabel={date.toLocaleDateString('es-ES', {
@@ -87,15 +85,19 @@ function TodayDateStrip({
             })}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
-            key={date.toISOString()}
-            onPress={() => onSelect(dateKey)}
+            key={key}
+            onPress={() => onSelect(key)}
             style={[
               styles.dateCell,
-              selected && {
-                backgroundColor: theme.colors.primary,
-                borderColor: theme.colors.primary,
+              { height: dateCellHeight },
+              {
+                backgroundColor: selected
+                  ? theme.colors.primary
+                  : theme.colors.surface,
+                borderColor: selected
+                  ? theme.colors.primary
+                  : theme.colors.border,
               },
-              !selected && { borderColor: 'transparent' },
             ]}
           >
             <Text
@@ -115,56 +117,42 @@ function TodayDateStrip({
           </Pressable>
         );
       })}
-    </View>
+    </ScrollView>
   );
 }
 
-type OrderedSectionProps = {
-  section: DashboardSectionId;
-  index: number;
-  total: number;
-  ordering: boolean;
-  onMove: (direction: -1 | 1) => void;
-  children: ReactNode;
-};
-
-function OrderedSection({
-  section,
-  index,
-  total,
-  ordering,
-  onMove,
-  children,
-}: OrderedSectionProps) {
+function InlineEmpty({
+  title,
+  actionLabel,
+  onPress,
+}: {
+  title: string;
+  actionLabel: string;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
   return (
-    <View style={styles.section}>
-      <SectionHeader
-        action={
-          ordering ? (
-            <View style={styles.orderActions}>
-              <IconButton
-                accessibilityLabel={`Subir ${sectionNames[section]}`}
-                disabled={index === 0}
-                icon={ArrowUp}
-                onPress={() => onMove(-1)}
-                size="compact"
-                variant="tonal"
-              />
-              <IconButton
-                accessibilityLabel={`Bajar ${sectionNames[section]}`}
-                disabled={index === total - 1}
-                icon={ArrowDown}
-                onPress={() => onMove(1)}
-                size="compact"
-                variant="tonal"
-              />
-            </View>
-          ) : undefined
-        }
-        title={sectionNames[section]}
-      />
-      <View style={styles.list}>{children}</View>
-    </View>
+    <Pressable
+      accessibilityLabel={`${title}. ${actionLabel}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.inlineEmpty,
+        {
+          backgroundColor: theme.colors.surface,
+          borderColor: theme.colors.border,
+          opacity: pressed ? 0.75 : 1,
+        },
+      ]}
+    >
+      <Text style={styles.inlineEmptyCopy} tone="secondary" variant="caption">
+        {title}
+      </Text>
+      <Plus color={theme.colors.primary} size={18} strokeWidth={2.3} />
+      <Text color="primary" variant="label">
+        {actionLabel}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -180,21 +168,19 @@ export function TodayScreen() {
     progress,
     toggleHabit,
     addHabitValue,
-    startHabitTimer,
-    stopHabitTimer,
     toggleTask,
     toggleSubtask,
     skipHabit,
     pauseHabit,
     resumeHabit,
     setSelectedDate,
-    moveDashboardSection,
+    openTimerSheet,
   } = useAtlasApp();
-  const [ordering, setOrdering] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState<
     'history' | 'pause' | null
   >(null);
   const [pauseTargetId, setPauseTargetId] = useState<string | null>(null);
+  const [actionHabitId, setActionHabitId] = useState<string | null>(null);
   const hasProfileContent =
     snapshot.habits.length > 0 ||
     snapshot.tasks.length > 0 ||
@@ -210,6 +196,8 @@ export function TodayScreen() {
   today.setHours(0, 0, 0, 0);
   const pauseMinimumDate = new Date(today);
   pauseMinimumDate.setDate(pauseMinimumDate.getDate() + 1);
+  const todayKey = localDateKey(today);
+  const pauseMinimumDateKey = localDateKey(pauseMinimumDate);
   const dateLabel = capitalize(
     selectedDateObject.toLocaleDateString('es-ES', {
       weekday: 'long',
@@ -217,46 +205,25 @@ export function TodayScreen() {
       month: 'long',
     }),
   );
+  const actionHabit = selectedHabits.find(
+    (habit) => habit.id === actionHabitId,
+  );
 
-  const openHabitActions = (habitId: string) => {
-    const habit = selectedHabits.find((item) => item.id === habitId);
-    if (!habit) return;
-    Alert.alert(habit.title, 'Elige cómo ajustar este punto de la ruta.', [
-      {
-        text: habit.skipped ? 'Deshacer omisión' : 'Omitir este día',
-        onPress: () => skipHabit(habit.id),
-      },
-      {
-        text: 'Editar hábito',
-        onPress: () => router.push(`/create?id=${habit.id}`),
-      },
-      habit.paused
-        ? { text: 'Reanudar hábito', onPress: () => resumeHabit(habit.id) }
-        : {
-            text: 'Pausar hasta…',
-            onPress: () => {
-              setPauseTargetId(habit.id);
-              setDatePickerMode('pause');
-            },
-          },
-    ]);
+  const closeDatePicker = () => {
+    if (datePickerMode === 'pause') setPauseTargetId(null);
+    setDatePickerMode(null);
   };
 
-  const onDatePickerChange = (event: DateTimePickerEvent, value?: Date) => {
+  const confirmDatePicker = (value: string | null) => {
     const mode = datePickerMode;
-    if (Platform.OS === 'android' || event.type === 'dismissed') {
-      setDatePickerMode(null);
-    }
-    if (event.type === 'dismissed' && mode === 'pause') {
-      setPauseTargetId(null);
-    }
-    if (event.type !== 'set' || !value || !mode) return;
+    if (!value || !mode) return;
+    setDatePickerMode(null);
     if (mode === 'history') {
-      setSelectedDate(localDateKey(value));
+      setSelectedDate(value);
       return;
     }
     if (pauseTargetId) {
-      pauseHabit(pauseTargetId, localDateKey(value));
+      pauseHabit(pauseTargetId, value);
       setPauseTargetId(null);
     }
   };
@@ -267,7 +234,6 @@ export function TodayScreen() {
         contentContainerStyle={styles.content}
         safeAreaEdges={['top', 'left', 'right']}
         scroll
-        scrollProps={{ contentInsetAdjustmentBehavior: 'never' }}
       >
         <PageHeader
           description={dateLabel}
@@ -281,9 +247,7 @@ export function TodayScreen() {
           style={styles.loading}
         >
           <ActivityIndicator color={theme.colors.primary} size="large" />
-          <Text align="center" tone="secondary" variant="body">
-            Preparando tu día…
-          </Text>
+          <Text tone="secondary">Preparando tu día…</Text>
         </View>
       </Screen>
     );
@@ -295,7 +259,6 @@ export function TodayScreen() {
         contentContainerStyle={styles.content}
         safeAreaEdges={['top', 'left', 'right']}
         scroll
-        scrollProps={{ contentInsetAdjustmentBehavior: 'never' }}
       >
         <PageHeader
           description={dateLabel}
@@ -304,212 +267,249 @@ export function TodayScreen() {
         />
         <EmptyState
           actionLabel="Crear mi primer elemento"
-          description="Añade un hábito, una tarea o una rutina. Todo se guardará en este dispositivo."
+          description="Añade primero el hábito que quieres ver cada día. Todo se guarda en este dispositivo."
           icon={Map}
-          onAction={() => router.push('/create')}
+          onAction={() => router.push('/create?type=habit')}
           title="Tu Atlas empieza aquí"
         />
-        <View style={styles.bottomSpace} />
       </Screen>
     );
   }
-
-  const section = (id: DashboardSectionId): ReactNode => {
-    if (id === 'habits') {
-      if (selectedHabits.length === 0) {
-        return (
-          <EmptyState
-            actionLabel="Crear hábito"
-            compact
-            description="Traza el primer punto de tu día."
-            onAction={() => router.push('/create?type=habit')}
-            title="Sin hábitos para hoy"
-          />
-        );
-      }
-      return selectedHabits.map((habit) => (
-        <HabitCard
-          habit={habit}
-          key={habit.id}
-          onAdd={(amount) => addHabitValue(habit.id, amount)}
-          onStartTimer={() => startHabitTimer(habit.id)}
-          onStopTimer={() => stopHabitTimer(habit.id)}
-          onToggle={() => toggleHabit(habit.id)}
-          onOpenActions={() => openHabitActions(habit.id)}
-          timerAvailable={isToday}
-        />
-      ));
-    }
-
-    if (id === 'tasks') {
-      if (selectedTasks.length === 0) {
-        return (
-          <EmptyState
-            actionLabel="Crear tarea"
-            compact
-            description="No hay tareas pendientes en la ruta."
-            onAction={() => router.push('/create?type=task')}
-            title="Día despejado"
-          />
-        );
-      }
-      return selectedTasks.map((task) => (
-        <TaskCard
-          key={task.id}
-          onToggle={() => toggleTask(task.id)}
-          onToggleSubtask={(subtaskId) => toggleSubtask(task.id, subtaskId)}
-          task={task}
-        />
-      ));
-    }
-
-    if (selectedRoutines.length === 0) {
-      return (
-        <EmptyState
-          actionLabel="Crear rutina"
-          compact
-          description="Agrupa pasos para recorrerlos sin distracciones."
-          onAction={() => router.push('/create?type=routine')}
-          title="Sin rutas guiadas"
-        />
-      );
-    }
-    return selectedRoutines.map((routine) => (
-      <RoutineCard
-        key={routine.id}
-        onPress={() => router.push(`/routine/${routine.id}`)}
-        routine={routine}
-      />
-    ));
-  };
 
   return (
     <Screen
       contentContainerStyle={styles.content}
       safeAreaEdges={['top', 'left', 'right']}
       scroll
-      scrollProps={{ contentInsetAdjustmentBehavior: 'never' }}
+      scrollProps={{
+        contentInsetAdjustmentBehavior: 'never',
+        keyboardDismissMode: 'on-drag',
+      }}
     >
       <PageHeader
-        actionIcon={Settings2}
-        actionLabel={ordering ? 'Terminar de ordenar' : 'Ordenar panel'}
+        actionIcon={Timer}
+        actionLabel="Abrir cronómetro"
         description={dateLabel}
         eyebrow="Atlas diario"
-        onAction={() => setOrdering((value) => !value)}
+        onAction={() => openTimerSheet()}
         title="Hoy"
       />
 
       <TodayDateStrip onSelect={setSelectedDate} selectedDate={selectedDate} />
-
       <Button
         fullWidth
         label="Elegir otra fecha"
         leadingIcon={CalendarDays}
         onPress={() => setDatePickerMode('history')}
         size="sm"
-        variant="secondary"
+        variant="ghost"
       />
 
-      {datePickerMode ? (
-        <DateTimePicker
-          display="calendar"
-          maximumDate={datePickerMode === 'history' ? today : undefined}
-          minimumDate={
-            datePickerMode === 'pause' ? pauseMinimumDate : undefined
-          }
-          mode="date"
-          onChange={onDatePickerChange}
-          value={
-            datePickerMode === 'pause' ? pauseMinimumDate : selectedDateObject
-          }
-        />
-      ) : null}
+      <AtlasCalendarSheet
+        initialMonth={
+          datePickerMode === 'pause' ? pauseMinimumDateKey : selectedDate
+        }
+        maxDate={datePickerMode === 'history' ? todayKey : undefined}
+        minDate={datePickerMode === 'pause' ? pauseMinimumDateKey : undefined}
+        onClose={closeDatePicker}
+        onConfirm={confirmDatePicker}
+        title={
+          datePickerMode === 'pause' ? 'Pausar hasta una fecha' : 'Elegir fecha'
+        }
+        value={datePickerMode === 'pause' ? pauseMinimumDateKey : selectedDate}
+        visible={datePickerMode !== null}
+      />
+
+      <Card padding="sm" style={styles.progressCard} variant="outlined">
+        <View style={styles.progressCopy}>
+          <Text variant="label">
+            {progress.completed} de {progress.total} completados
+          </Text>
+          <Text tone="secondary" variant="caption">
+            {progress.total === 0
+              ? 'Nada programado para esta fecha.'
+              : progress.ratio >= 1
+                ? 'Día completado.'
+                : 'Empieza por un hábito.'}
+          </Text>
+        </View>
+        <Text tone="accent" variant="bodyStrong">
+          {Math.round(progress.ratio * 100)}%
+        </Text>
+        <View
+          accessibilityLabel={`${Math.round(progress.ratio * 100)} por ciento del día completado`}
+          accessibilityRole="progressbar"
+          accessibilityValue={{
+            min: 0,
+            max: 100,
+            now: Math.round(progress.ratio * 100),
+          }}
+          style={[
+            styles.progressTrack,
+            { backgroundColor: theme.colors.track },
+          ]}
+        >
+          <View
+            style={[
+              styles.progressFill,
+              {
+                backgroundColor: theme.colors.primary,
+                width: `${Math.round(progress.ratio * 100)}%`,
+              },
+            ]}
+          />
+        </View>
+      </Card>
 
       {!isToday ? (
         <Card padding="sm" variant="tinted">
           <Text align="center" tone="secondary" variant="caption">
-            Editas el historial del {dateLabel.toLocaleLowerCase('es')}. Puedes
-            corregir valores u omitir el día sin romper la racha.
+            Estás corrigiendo los hábitos de esta fecha. El foco histórico se
+            consulta en Avance.
           </Text>
         </Card>
       ) : null}
 
-      <Card padding="lg" style={styles.hero} variant="raised">
-        <View style={styles.heroRoute} pointerEvents="none">
-          <View
-            style={[
-              styles.orbitLine,
-              { borderColor: theme.colors.borderStrong },
-            ]}
-          />
-          <View
-            style={[styles.waypoint, { backgroundColor: theme.colors.primary }]}
-          />
+      <View style={styles.section}>
+        <SectionHeader title="Hábitos" />
+        <View style={styles.list}>
+          {selectedHabits.length === 0 ? (
+            <InlineEmpty
+              actionLabel="Crear hábito"
+              onPress={() => router.push('/create?type=habit')}
+              title="No hay hábitos programados."
+            />
+          ) : (
+            selectedHabits.map((habit) => (
+              <HabitCard
+                habit={habit}
+                key={habit.id}
+                onAdd={(amount) => addHabitValue(habit.id, amount)}
+                onOpenActions={() => setActionHabitId(habit.id)}
+                onOpenTimer={
+                  isToday && habit.metric === 'duration'
+                    ? () => openTimerSheet(habit.id)
+                    : undefined
+                }
+                onToggle={() => toggleHabit(habit.id)}
+              />
+            ))
+          )}
         </View>
-        <View style={styles.heroCopy}>
-          <View style={styles.heroEyebrow}>
-            <Map color={theme.colors.primary} size={16} strokeWidth={2.2} />
-            <Text tone="accent" variant="eyebrow">
-              RUMBO DE HOY
-            </Text>
+      </View>
+
+      {isToday ? (
+        <>
+          <View style={styles.section}>
+            <SectionHeader title="Tareas" />
+            <View style={styles.list}>
+              {selectedTasks.length === 0 ? (
+                <InlineEmpty
+                  actionLabel="Crear tarea"
+                  onPress={() => router.push('/create?type=task')}
+                  title="No hay tareas para hoy."
+                />
+              ) : (
+                selectedTasks.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    onOpenTimer={() => openTimerSheet(task.id)}
+                    onToggle={() => toggleTask(task.id)}
+                    onToggleSubtask={(subtaskId) =>
+                      toggleSubtask(task.id, subtaskId)
+                    }
+                    task={task}
+                  />
+                ))
+              )}
+            </View>
           </View>
-          <Text variant="heading">
-            {progress.completed} de {progress.total} puntos alcanzados
-          </Text>
-          <Text tone="secondary" variant="caption">
-            {progress.ratio >= 1
-              ? 'Ruta completa. El resto del día es tuyo.'
-              : progress.ratio >= 0.5
-                ? 'Ya has cruzado la mitad del recorrido.'
-                : 'Avanza con una acción pequeña cada vez.'}
-          </Text>
-        </View>
-        <ProgressOrbit
-          accessibilityLabel={`${progress.completed} de ${progress.total} elementos completados`}
-          max={Math.max(1, progress.total)}
-          size={82}
-          value={progress.completed}
-        />
-      </Card>
 
-      {ordering ? (
-        <Card padding="sm" variant="outlined">
-          <Text align="center" tone="secondary" variant="caption">
-            Usa las flechas para colocar primero lo que más te importa.
-          </Text>
-        </Card>
+          <View style={styles.section}>
+            <SectionHeader title="Rutinas" />
+            <View style={styles.list}>
+              {selectedRoutines.length === 0 ? (
+                <InlineEmpty
+                  actionLabel="Crear rutina"
+                  onPress={() => router.push('/create?type=routine')}
+                  title="No hay rutinas para hoy."
+                />
+              ) : (
+                selectedRoutines.map((routine) => (
+                  <RoutineCard
+                    key={routine.id}
+                    onPress={() => router.push(`/routine/${routine.id}`)}
+                    routine={routine}
+                  />
+                ))
+              )}
+            </View>
+          </View>
+        </>
       ) : null}
 
-      {snapshot.dashboardOrder
-        .filter((sectionId) => isToday || sectionId === 'habits')
-        .map((sectionId, index, visibleSections) => (
-          <OrderedSection
-            index={index}
-            key={sectionId}
-            onMove={(direction) => moveDashboardSection(sectionId, direction)}
-            ordering={ordering}
-            section={sectionId}
-            total={visibleSections.length}
-          >
-            {section(sectionId)}
-          </OrderedSection>
-        ))}
-      <View style={styles.bottomSpace} />
+      <FeedbackSheet
+        actions={
+          actionHabit
+            ? [
+                {
+                  label: actionHabit.skipped
+                    ? 'Deshacer omisión'
+                    : 'Omitir este día',
+                  onPress: () => {
+                    skipHabit(actionHabit.id);
+                    setActionHabitId(null);
+                  },
+                },
+                {
+                  label: 'Editar hábito',
+                  onPress: () => {
+                    setActionHabitId(null);
+                    router.push(`/create?id=${actionHabit.id}`);
+                  },
+                },
+                actionHabit.paused
+                  ? {
+                      label: 'Reanudar hábito',
+                      onPress: () => {
+                        resumeHabit(actionHabit.id);
+                        setActionHabitId(null);
+                      },
+                    }
+                  : {
+                      label: 'Pausar hasta una fecha',
+                      onPress: () => {
+                        setPauseTargetId(actionHabit.id);
+                        setActionHabitId(null);
+                        setDatePickerMode('pause');
+                      },
+                    },
+              ]
+            : []
+        }
+        message="Ajusta este hábito sin perder el contexto del día."
+        onClose={() => setActionHabitId(null)}
+        title={actionHabit?.title ?? 'Acciones del hábito'}
+        visible={Boolean(actionHabit)}
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { gap: 20, paddingBottom: 112, paddingTop: 12 },
-  dateStrip: { flexDirection: 'row', gap: 8, justifyContent: 'space-between' },
+  content: { gap: 14, paddingBottom: 148, paddingTop: 8 },
+  dateStrip: { gap: 8, paddingRight: 16 },
+  dateStripViewport: { flexGrow: 0, flexShrink: 0 },
   dateCell: {
     alignItems: 'center',
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
-    flex: 1,
-    gap: 2,
-    minHeight: 62,
+    flexShrink: 0,
+    gap: 1,
     justifyContent: 'center',
+    maxWidth: 56,
+    minWidth: 56,
+    width: 56,
   },
   loading: {
     alignItems: 'center',
@@ -518,39 +518,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 320,
   },
-  hero: { alignItems: 'center', flexDirection: 'row', gap: 16, minHeight: 142 },
-  heroCopy: { flex: 1, gap: 6 },
-  heroEyebrow: { alignItems: 'center', flexDirection: 'row', gap: 7 },
-  heroRoute: {
-    bottom: 0,
-    left: 0,
-    overflow: 'hidden',
-    position: 'absolute',
-    right: 0,
-    top: 0,
+  progressCard: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
   },
-  orbitLine: {
-    borderRadius: 130,
+  progressCopy: { flex: 1, gap: 1 },
+  progressTrack: {
+    borderRadius: 999,
+    height: 5,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  progressFill: { borderRadius: 999, height: '100%' },
+  section: { gap: 7 },
+  list: { gap: 9 },
+  inlineEmpty: {
+    alignItems: 'center',
+    borderRadius: 14,
     borderStyle: 'dashed',
     borderWidth: 1,
-    height: 210,
-    opacity: 0.32,
-    position: 'absolute',
-    right: -90,
-    top: -100,
-    transform: [{ rotate: '-16deg' }],
-    width: 210,
+    flexDirection: 'row',
+    gap: 7,
+    minHeight: 60,
+    paddingHorizontal: 14,
   },
-  waypoint: {
-    borderRadius: 5,
-    height: 10,
-    position: 'absolute',
-    right: 116,
-    top: 24,
-    width: 10,
-  },
-  section: { gap: 8 },
-  list: { gap: 10 },
-  orderActions: { flexDirection: 'row', gap: 6 },
-  bottomSpace: { height: 12 },
+  inlineEmptyCopy: { flex: 1 },
 });

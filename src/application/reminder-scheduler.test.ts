@@ -116,7 +116,19 @@ describe('rescheduleAtlasRemindersAsync', () => {
         ('reminder-1', 'habit-1', 1, '09:00', 10, ?, ?)`,
       [createdAt, createdAt],
     );
+    await database.runAsync(
+      `INSERT INTO reminder_deliveries
+        (id, reminder_rule_id, occurrence_key, scheduled_at, notification_id)
+       VALUES
+        ('delivery-snoozed', 'reminder-1', 'snoozed-occurrence', ?,
+         'atlas-snooze-must-survive')`,
+      [createdAt],
+    );
     const cancelled: string[] = [];
+    const scheduledEntries: {
+      notificationId?: string;
+      exactAlarm?: boolean;
+    }[] = [];
     const scheduledIds = new Set(['atlas-snooze-must-survive']);
     let nextId = 0;
     const dependencies = {
@@ -125,7 +137,11 @@ describe('rescheduleAtlasRemindersAsync', () => {
         cancelled.push(notificationId);
         scheduledIds.delete(notificationId);
       },
-      scheduleOneShot: async (entry: { notificationId?: string }) => {
+      scheduleOneShot: async (entry: {
+        notificationId?: string;
+        exactAlarm?: boolean;
+      }) => {
+        scheduledEntries.push(entry);
         const notificationId = entry.notificationId ?? 'unexpected-random-id';
         scheduledIds.add(notificationId);
         return notificationId;
@@ -144,11 +160,16 @@ describe('rescheduleAtlasRemindersAsync', () => {
       scheduled: 8,
       cancelled: 0,
     });
+    expect(scheduledEntries.every((entry) => entry.exactAlarm === false)).toBe(
+      true,
+    );
     const currentPeriodIds = new Set(
       (
         await database.getAllAsync<{ notification_id: string }>(
           `SELECT notification_id FROM reminder_deliveries
-            WHERE scheduled_at < ? ORDER BY scheduled_at`,
+            WHERE scheduled_at < ?
+              AND notification_id LIKE 'atlas-reminder-%'
+            ORDER BY scheduled_at`,
           [new Date(2026, 8, 7, 0, 0).getTime()],
         )
       ).map((row) => row.notification_id),
@@ -186,6 +207,34 @@ describe('rescheduleAtlasRemindersAsync', () => {
       adapter.native
         .prepare('SELECT COUNT(*) AS count FROM reminder_deliveries')
         .get(),
-    ).toEqual({ count: 3 });
+    ).toEqual({ count: 4 });
+
+    await expect(
+      rescheduleAtlasRemindersAsync({
+        ...options,
+        dependencies: {
+          ...dependencies,
+          cancelOneShot: async () => {
+            throw new Error('native cancellation failed');
+          },
+        },
+        enabled: false,
+      }),
+    ).rejects.toThrow('native cancellation failed');
+    expect(
+      adapter.native
+        .prepare('SELECT COUNT(*) AS count FROM reminder_deliveries')
+        .get(),
+    ).toEqual({ count: 4 });
+
+    expect(
+      await rescheduleAtlasRemindersAsync({ ...options, enabled: false }),
+    ).toEqual({ desired: 0, scheduled: 0, cancelled: 4 });
+    expect(scheduledIds).toEqual(new Set());
+    expect(
+      adapter.native
+        .prepare('SELECT COUNT(*) AS count FROM reminder_deliveries')
+        .get(),
+    ).toEqual({ count: 0 });
   });
 });

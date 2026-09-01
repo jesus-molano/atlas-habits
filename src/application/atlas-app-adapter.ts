@@ -1,13 +1,20 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import type { SQLiteDatabase } from 'expo-sqlite';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
-import { getCommandGateway, getDatabase, type CommandGateway } from '../data';
+import {
+  createUuid,
+  getCommandGateway,
+  getDatabase,
+  type CommandGateway,
+} from '../data';
 import { createEmptySnapshot } from '../features/atlas/empty-snapshot';
 import type {
   AdapterActionResult,
   AtlasAppAdapter,
   AtlasSnapshot,
+  ReminderCapability,
   SyncState,
 } from '../features/atlas/types';
 import {
@@ -29,7 +36,10 @@ import { getAtlasDeviceId } from './device-identity';
 import { withoutLegacyStarterItems } from './legacy-starter-cleanup';
 import { OptionalAtlasSync } from './optional-sync';
 import { AtlasSnapshotWriter } from './persistence';
-import { rescheduleAtlasRemindersAsync } from './reminder-scheduler';
+import {
+  REMINDERS_ENABLED_STORAGE_KEY,
+  rescheduleAtlasRemindersAsync,
+} from './reminder-scheduler';
 import {
   emitAtlasSnapshotInvalidation,
   subscribeToAtlasSnapshotInvalidations,
@@ -37,6 +47,7 @@ import {
 import { SerializedAsyncQueue } from './serial-queue';
 import { diffAtlasSnapshots } from './snapshot-diff';
 import { loadAtlasSnapshotFromSQLite } from './snapshot-loader';
+import { syncIssueFor } from './sync-error-copy';
 import { atlasWidgetDataSource } from './widget-data-source';
 
 type SQLiteAtlasRuntime = Readonly<{
@@ -59,6 +70,8 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
   private requestedWriteGeneration = 0;
   private syncState: SyncState = { status: 'local-only' };
   private canonicalSnapshot: AtlasSnapshot | null = null;
+  private remindersEnabled = true;
+  private reminderPreferenceLoaded = false;
 
   private runtime(): Promise<SQLiteAtlasRuntime> {
     this.runtimePromise ??= Promise.all([getDatabase(), getCommandGateway()])
@@ -95,10 +108,51 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
     runtime: SQLiteAtlasRuntime,
     now = new Date(),
   ): Promise<AtlasSnapshot> {
-    return (
+    const snapshot =
       (await this.readRawCanonical(runtime, now)) ??
-      createEmptySnapshot(this.syncState)
-    );
+      createEmptySnapshot(this.syncState);
+    return {
+      ...snapshot,
+      reminderCapability: await this.readReminderCapability(),
+    };
+  }
+
+  private async loadReminderPreference(): Promise<boolean> {
+    if (!this.reminderPreferenceLoaded) {
+      const stored = await AsyncStorage.getItem(REMINDERS_ENABLED_STORAGE_KEY);
+      this.remindersEnabled = stored !== 'false';
+      this.reminderPreferenceLoaded = true;
+    }
+    return this.remindersEnabled;
+  }
+
+  private async readReminderCapability(): Promise<ReminderCapability> {
+    const masterEnabled = await this.loadReminderPreference();
+    if (Platform.OS !== 'android') {
+      return {
+        masterEnabled,
+        notifications: 'not-applicable',
+        exactAlarms: 'not-applicable',
+      };
+    }
+    const [permission, exactAlarms] = await Promise.all([
+      Notifications.getPermissionsAsync(),
+      getExactAlarmAccessAsync(),
+    ]);
+    return {
+      masterEnabled,
+      notifications: permission.granted
+        ? 'granted'
+        : permission.canAskAgain
+          ? 'askable'
+          : 'blocked',
+      exactAlarms:
+        exactAlarms === 'granted'
+          ? 'granted'
+          : exactAlarms === 'not-applicable'
+            ? 'not-applicable'
+            : 'needs-settings',
+    };
   }
 
   private async removeLegacyStarterItems(
@@ -120,7 +174,9 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
     refreshWidgets = true,
   ): Promise<void> {
     const work: Promise<unknown>[] = [
-      rescheduleAtlasRemindersAsync({ database: runtime.database }),
+      this.loadReminderPreference().then((enabled) =>
+        this.reconcileReminders(runtime, enabled),
+      ),
     ];
     if (refreshWidgets) {
       work.push(refreshAtlasWidgetsAsync(atlasWidgetDataSource));
@@ -128,21 +184,46 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
     await Promise.allSettled(work);
   }
 
+  private reconcileReminders(runtime: SQLiteAtlasRuntime, enabled: boolean) {
+    return rescheduleAtlasRemindersAsync({
+      database: runtime.database,
+      enabled,
+    });
+  }
+
+  private recordSyncFailure(error: unknown): void {
+    const { failure, issue } = syncIssueFor(error);
+    this.syncState = {
+      status: 'error',
+      accountEmail: this.syncState.accountEmail,
+      message: failure.message,
+      issue,
+    };
+  }
+
   private queueLocalSync(runtime: SQLiteAtlasRuntime): void {
     void runtime.sync
       .syncNow('local_change')
       .then((summary) => {
-        if (summary.appliedMutations === 0) return;
         void this.writeQueue
           .enqueue(async () => {
+            this.syncState = await runtime.sync.state(false);
             this.canonicalSnapshot = await this.readCanonical(runtime);
-            await this.runMaintenance(runtime);
+            if (summary.appliedMutations > 0) {
+              await this.runMaintenance(runtime);
+            }
             emitAtlasSnapshotInvalidation('remote-sync');
           })
           .catch(() => undefined);
       })
-      .catch(() => {
-        // The oplog remains pending and the foreground path retries safely.
+      .catch((error: unknown) => {
+        void this.writeQueue
+          .enqueue(async () => {
+            this.recordSyncFailure(error);
+            this.canonicalSnapshot = await this.readCanonical(runtime);
+            emitAtlasSnapshotInvalidation('remote-sync');
+          })
+          .catch(() => undefined);
       });
   }
 
@@ -157,9 +238,8 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
       if (this.syncState.status === 'connected') {
         try {
           await runtime.sync.syncNow('foreground');
-        } catch {
-          // The SQLite profile remains authoritative while offline. The oplog
-          // and remote cursor make a later foreground retry safe.
+        } catch (error) {
+          this.recordSyncFailure(error);
         }
       }
       this.canonicalSnapshot = await this.readCanonical(runtime, now);
@@ -169,28 +249,27 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
   }
 
   async refreshSnapshot(): Promise<AtlasSnapshot> {
-    const runtime = await this.runtime();
-    this.canonicalSnapshot = await this.readCanonical(runtime);
-    return this.canonicalSnapshot;
+    return this.writeQueue.enqueue(async () => {
+      const runtime = await this.runtime();
+      this.canonicalSnapshot = await this.readCanonical(runtime);
+      return this.canonicalSnapshot;
+    });
   }
 
-  async saveSnapshot(snapshot: AtlasSnapshot): Promise<void> {
+  async saveSnapshot(
+    snapshot: AtlasSnapshot,
+    requestedLocalDate?: string,
+  ): Promise<void> {
     const generation = ++this.requestedWriteGeneration;
     await this.writeQueue.enqueue(async () => {
       const runtime = await this.runtime();
       const now = new Date();
       const previous = await this.readCanonical(runtime, now);
-      const changes = diffAtlasSnapshots(
-        previous,
-        snapshot,
-        localDateFromDate(now),
-      );
+      const localDate = (requestedLocalDate ??
+        localDateFromDate(now)) as `${number}-${number}-${number}`;
+      const changes = diffAtlasSnapshots(previous, snapshot, localDate);
       if (changes.length > 0) {
-        await runtime.writer.applyChanges(
-          changes,
-          snapshot,
-          localDateFromDate(now),
-        );
+        await runtime.writer.applyChanges(changes, snapshot, localDate);
       }
       this.canonicalSnapshot = await this.readCanonical(runtime, now);
       this.queueLocalSync(runtime);
@@ -212,7 +291,22 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
     return this.writeQueue.enqueue(async () => {
       const runtime = await this.runtime();
       const result = await runtime.sync.connect();
-      this.syncState = await runtime.sync.state(false);
+      if (result.ok) {
+        const state = await runtime.sync.state(false);
+        this.syncState = result.syncIssue
+          ? {
+              ...state,
+              message: result.message,
+              issue: result.syncIssue,
+            }
+          : state;
+      } else {
+        this.syncState = {
+          status: 'error',
+          message: result.message,
+          issue: result.syncIssue,
+        };
+      }
       if (result.ok) {
         this.canonicalSnapshot = await this.readCanonical(runtime);
         await this.runMaintenance(runtime);
@@ -243,6 +337,7 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
         await Linking.openSettings();
         return {
           ok: false,
+          code: 'settings-opened',
           message:
             'Se han abierto los ajustes de Atlas. Activa Notificaciones y vuelve a la aplicación.',
         };
@@ -255,12 +350,14 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
           await Linking.openSettings();
           return {
             ok: false,
+            code: 'settings-opened',
             message:
               'Se han abierto los ajustes de Atlas. Activa Notificaciones y vuelve a la aplicación.',
           };
         }
         return {
           ok: false,
+          code: 'permission-denied',
           message:
             'Android no ha concedido las notificaciones. Puedes activarlas desde los ajustes de Atlas.',
         };
@@ -297,6 +394,7 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
       await requestExactAlarmAccessAsync();
       return {
         ok: false,
+        code: 'settings-opened',
         message:
           'Se han abierto los ajustes de Alarmas y recordatorios. Activa Atlas y vuelve a la aplicación.',
       };
@@ -309,6 +407,210 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
         ),
       };
     }
+  }
+
+  async setRemindersEnabled(enabled: boolean): Promise<AdapterActionResult> {
+    if (enabled) {
+      const permission = await Notifications.getPermissionsAsync();
+      if (!permission.granted) {
+        const access = await this.requestNotificationAccess();
+        if (!access.ok) return access;
+      }
+    }
+    try {
+      await AsyncStorage.setItem(
+        REMINDERS_ENABLED_STORAGE_KEY,
+        String(enabled),
+      );
+      this.remindersEnabled = enabled;
+      this.reminderPreferenceLoaded = true;
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'storage-failed',
+        message: errorMessage(
+          error,
+          'No se pudo cambiar el estado de los recordatorios.',
+        ),
+      };
+    }
+    try {
+      const runtime = await this.runtime();
+      await this.reconcileReminders(runtime, enabled);
+      this.canonicalSnapshot = await this.readCanonical(runtime);
+      emitAtlasSnapshotInvalidation('local-save');
+      return {
+        ok: true,
+        message: enabled
+          ? 'Los recordatorios de Atlas están activos en este dispositivo.'
+          : 'Los recordatorios de Atlas están pausados en este dispositivo.',
+      };
+    } catch {
+      emitAtlasSnapshotInvalidation('local-save');
+      return {
+        ok: false,
+        code: 'reminder-reconcile-failed',
+        message:
+          'La preferencia quedó guardada, pero Android no confirmó todos los avisos. Reintenta.',
+      };
+    }
+  }
+
+  private async refreshAfterTimerCommand(
+    runtime: SQLiteAtlasRuntime,
+    shouldSync: boolean,
+  ): Promise<void> {
+    this.canonicalSnapshot = await this.readCanonical(runtime);
+    if (shouldSync) this.queueLocalSync(runtime);
+    emitAtlasSnapshotInvalidation('local-save');
+  }
+
+  async startTimer(itemId: string): Promise<AdapterActionResult> {
+    return this.writeQueue.enqueue(async () => {
+      try {
+        const runtime = await this.runtime();
+        await runtime.gateway.progress.startTimer({ itemId });
+        await this.refreshAfterTimerCommand(runtime, false);
+        return { ok: true, message: 'Cronómetro iniciado.' };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'already-active',
+          message: errorMessage(error, 'No se pudo iniciar el cronómetro.'),
+        };
+      }
+    });
+  }
+
+  async pauseTimer(): Promise<AdapterActionResult> {
+    return this.writeQueue.enqueue(async () => {
+      try {
+        const runtime = await this.runtime();
+        await runtime.gateway.progress.pauseTimer();
+        await this.refreshAfterTimerCommand(runtime, false);
+        return { ok: true, message: 'Cronómetro pausado.' };
+      } catch (error) {
+        return {
+          ok: false,
+          message: errorMessage(error, 'No se pudo pausar.'),
+        };
+      }
+    });
+  }
+
+  async resumeTimer(): Promise<AdapterActionResult> {
+    return this.writeQueue.enqueue(async () => {
+      try {
+        const runtime = await this.runtime();
+        await runtime.gateway.progress.resumeTimer();
+        await this.refreshAfterTimerCommand(runtime, false);
+        return { ok: true, message: 'Cronómetro reanudado.' };
+      } catch (error) {
+        return {
+          ok: false,
+          message: errorMessage(error, 'No se pudo reanudar.'),
+        };
+      }
+    });
+  }
+
+  async stopTimer(localDate: string): Promise<AdapterActionResult> {
+    return this.writeQueue.enqueue(async () => {
+      try {
+        const runtime = await this.runtime();
+        const result = await runtime.gateway.progress.stopTimer({
+          commandId: createUuid(),
+          deviceId: runtime.deviceId,
+          issuedAt: Date.now(),
+          payload: { localDate },
+        });
+        await this.refreshAfterTimerCommand(runtime, true);
+        const minutes = Math.max(
+          1,
+          Math.round(result.value.elapsedSeconds / 60),
+        );
+        return {
+          ok: true,
+          message: `${minutes} min guardados en el historial.`,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: errorMessage(error, 'No se pudo guardar la sesión.'),
+        };
+      }
+    });
+  }
+
+  async cancelTimer(): Promise<AdapterActionResult> {
+    return this.writeQueue.enqueue(async () => {
+      try {
+        const runtime = await this.runtime();
+        await runtime.gateway.progress.cancelTimer();
+        await this.refreshAfterTimerCommand(runtime, false);
+        return { ok: true, message: 'Sesión descartada.' };
+      } catch (error) {
+        return {
+          ok: false,
+          message: errorMessage(error, 'No se pudo cancelar la sesión.'),
+        };
+      }
+    });
+  }
+
+  async recordManualDuration(
+    itemId: string,
+    seconds: number,
+    localDate: string,
+  ): Promise<AdapterActionResult> {
+    return this.writeQueue.enqueue(async () => {
+      try {
+        const runtime = await this.runtime();
+        await runtime.gateway.progress.recordManualDuration({
+          commandId: createUuid(),
+          deviceId: runtime.deviceId,
+          issuedAt: Date.now(),
+          payload: { itemId, seconds, localDate },
+        });
+        await this.refreshAfterTimerCommand(runtime, true);
+        return {
+          ok: true,
+          message: `${Math.max(1, Math.round(seconds / 60))} min añadidos.`,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'invalid-target',
+          message: errorMessage(error, 'No se pudo guardar el tiempo.'),
+        };
+      }
+    });
+  }
+
+  async resolveLegacyTimers(
+    itemId: string | null,
+  ): Promise<AdapterActionResult> {
+    return this.writeQueue.enqueue(async () => {
+      try {
+        const runtime = await this.runtime();
+        await runtime.gateway.progress.resolveLegacyTimers(itemId);
+        await this.refreshAfterTimerCommand(runtime, false);
+        return {
+          ok: true,
+          message: itemId
+            ? 'Sesión recuperada.'
+            : 'Sesiones antiguas descartadas.',
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: errorMessage(
+            error,
+            'No se pudo resolver la sesión antigua.',
+          ),
+        };
+      }
+    });
   }
 
   async checkForUpdate(): Promise<AdapterActionResult> {

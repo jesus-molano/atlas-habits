@@ -26,6 +26,7 @@ export type ReminderScheduleDefinition = Readonly<{
   localTime: string | null;
   offsetMinutes: number;
   snoozeMinutes: number;
+  exactAlarm?: boolean;
   scheduleVersionId: string;
   versionNumber: number;
   effectiveFrom: string;
@@ -84,6 +85,7 @@ export type AtlasReminderPlanEntry = Readonly<{
   body: string;
   fireAt: Date;
   snoozeMinutes: number;
+  exactAlarm: boolean;
 }>;
 
 export type BuildAtlasReminderPlanInput = Readonly<{
@@ -493,6 +495,7 @@ export function buildAtlasReminderPlan(
         body: 'Toca completar o posponer',
         fireAt,
         snoozeMinutes: Math.max(1, Math.round(definition.snoozeMinutes)),
+        exactAlarm: definition.exactAlarm === true,
       });
     }
   }

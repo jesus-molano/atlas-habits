@@ -17,7 +17,7 @@ import { SyncIntegrityError } from '../sync/errors';
 import { SQLiteSyncStore } from '../sync/sqlite-store';
 
 import { SerializedAsyncQueue } from './serial-queue';
-import { googleAccessFailure, initialSyncFailure } from './sync-error-copy';
+import { googleAccessFailure, syncIssueFor } from './sync-error-copy';
 
 async function allDeviceOperations(
   repository: SyncRepository,
@@ -63,9 +63,12 @@ export class OptionalAtlasSync {
         ? { status: 'connected', accountEmail: this.user.email ?? undefined }
         : { status: 'local-only' };
     } catch (error) {
+      const failure = googleAccessFailure(error);
+      const { issue } = syncIssueFor(error);
       return {
         status: 'error',
-        message: googleAccessFailure(error).message,
+        message: failure.message,
+        issue,
       };
     }
   }
@@ -92,22 +95,30 @@ export class OptionalAtlasSync {
             'Cuenta conectada. Los datos locales y remotos están sincronizados.',
         };
       } catch (error) {
-        const failure = initialSyncFailure(error);
+        const { failure, issue } = syncIssueFor(error);
         if (!failure.retryable) {
           await this.provider.auth.signOut().catch(() => undefined);
           this.user = null;
-          return { ok: false, message: failure.message };
+          return {
+            ok: false,
+            message: failure.message,
+            syncIssue: issue,
+          };
         }
         return {
           ok: true,
           accountEmail: user.email ?? undefined,
           message: failure.message,
+          syncIssue: issue,
         };
       }
     } catch (error) {
+      const failure = googleAccessFailure(error);
+      const { issue } = syncIssueFor(error);
       return {
         ok: false,
-        message: googleAccessFailure(error).message,
+        message: failure.message,
+        syncIssue: issue,
       };
     }
   }

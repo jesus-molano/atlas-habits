@@ -6,12 +6,11 @@ import {
   Folder,
   MoreHorizontal,
   Minus,
-  Pause,
   Play,
   Plus,
+  Timer,
   Tag,
 } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Card, IconButton, Text } from '@/components/core';
@@ -31,7 +30,9 @@ function formatDuration(seconds: number): string {
   const remainder = total % 60;
   if (hours > 0) return `${hours} h ${minutes} min`;
   if (minutes > 0)
-    return `${minutes} min ${remainder.toString().padStart(2, '0')} s`;
+    return remainder > 0
+      ? `${minutes} min ${remainder.toString().padStart(2, '0')} s`
+      : `${minutes} min`;
   return `${remainder} s`;
 }
 
@@ -137,35 +138,19 @@ type HabitCardProps = {
   habit: HabitItem;
   onToggle: () => void;
   onAdd: (amount: number) => void;
-  onStartTimer: () => void;
-  onStopTimer: () => void;
+  onOpenTimer?: () => void;
   onOpenActions?: () => void;
-  timerAvailable?: boolean;
 };
 
 export function HabitCard({
   habit,
   onToggle,
   onAdd,
-  onStartTimer,
-  onStopTimer,
+  onOpenTimer,
   onOpenActions,
-  timerAvailable = true,
 }: HabitCardProps) {
   const theme = useTheme();
-  const [now, setNow] = useState(0);
-
-  useEffect(() => {
-    if (habit.timerStartedAt === undefined) return;
-    const interval = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(interval);
-  }, [habit.timerStartedAt]);
-
-  const liveValue =
-    habit.timerStartedAt === undefined
-      ? habit.value
-      : habit.value +
-        Math.max(0, Math.round((now - habit.timerStartedAt) / 1_000));
+  const liveValue = habit.value;
   const effectiveTarget =
     habit.metric === 'boolean'
       ? expectedCompletions(habit.schedule)
@@ -283,12 +268,12 @@ export function HabitCard({
             />
           </View>
           <View style={styles.quickActions}>
-            {habit.metric === 'count' || !timerAvailable ? (
+            {habit.metric === 'count' ? (
               <>
                 <IconButton
-                  accessibilityLabel={`Restar ${habit.metric === 'duration' ? 'un minuto' : `una ${habit.unit || 'unidad'}`} a ${habit.title}`}
+                  accessibilityLabel={`Restar una ${habit.unit || 'unidad'} a ${habit.title}`}
                   icon={Minus}
-                  onPress={() => onAdd(habit.metric === 'duration' ? -60 : -1)}
+                  onPress={() => onAdd(-1)}
                   size="compact"
                   variant="tonal"
                 />
@@ -297,71 +282,36 @@ export function HabitCard({
                   style={styles.metricValue}
                   variant="metric"
                 >
-                  {habit.metric === 'duration'
-                    ? formatDuration(liveValue)
-                    : liveValue}
+                  {liveValue}
                 </Text>
                 <IconButton
-                  accessibilityLabel={`Sumar ${habit.metric === 'duration' ? 'un minuto' : `una ${habit.unit || 'unidad'}`} a ${habit.title}`}
+                  accessibilityLabel={`Sumar una ${habit.unit || 'unidad'} a ${habit.title}`}
                   icon={Plus}
-                  onPress={() => onAdd(habit.metric === 'duration' ? 60 : 1)}
+                  onPress={() => onAdd(1)}
                   size="compact"
                   variant="solid"
                 />
               </>
-            ) : (
+            ) : onOpenTimer ? (
               <Pressable
-                accessibilityLabel={
-                  habit.timerStartedAt === undefined
-                    ? `Iniciar cronómetro de ${habit.title}`
-                    : `Pausar cronómetro de ${habit.title}`
-                }
+                accessibilityLabel={`Abrir cronómetro y registro manual para ${habit.title}`}
                 accessibilityRole="button"
-                accessibilityState={{
-                  selected: habit.timerStartedAt !== undefined,
-                }}
-                onPress={
-                  habit.timerStartedAt === undefined
-                    ? onStartTimer
-                    : onStopTimer
-                }
+                onPress={onOpenTimer}
                 style={({ pressed }) => [
                   styles.timerButton,
                   {
-                    backgroundColor:
-                      habit.timerStartedAt === undefined
-                        ? theme.colors.primaryMuted
-                        : theme.colors.primary,
+                    backgroundColor: theme.colors.primaryMuted,
                     borderColor: theme.colors.primary,
                     opacity: pressed ? 0.75 : 1,
                   },
                 ]}
               >
-                {habit.timerStartedAt === undefined ? (
-                  <Play
-                    color={theme.colors.primary}
-                    fill={theme.colors.primary}
-                    size={18}
-                  />
-                ) : (
-                  <Pause
-                    color={theme.colors.textInverse}
-                    fill={theme.colors.textInverse}
-                    size={18}
-                  />
-                )}
-                <Text
-                  color={
-                    habit.timerStartedAt === undefined
-                      ? 'primary'
-                      : 'textInverse'
-                  }
-                  variant="label"
-                >
-                  {habit.timerStartedAt === undefined ? 'Iniciar' : 'Pausar'}
+                <Timer color={theme.colors.primary} size={18} />
+                <Text color="primary" variant="label">
+                  Cronómetro o manual
                 </Text>
               </Pressable>
-            )}
+            ) : null}
           </View>
         </>
       ) : null}
@@ -374,6 +324,7 @@ type TaskCardProps = {
   onToggle: () => void;
   onToggleSubtask: (subtaskId: string) => void;
   onOpenActions?: () => void;
+  onOpenTimer?: () => void;
 };
 
 export function TaskCard({
@@ -381,6 +332,7 @@ export function TaskCard({
   onToggle,
   onToggleSubtask,
   onOpenActions,
+  onOpenTimer,
 }: TaskCardProps) {
   const theme = useTheme();
   const priority = {
@@ -448,6 +400,27 @@ export function TaskCard({
         notes={task.notes}
         tags={task.tags}
       />
+      {onOpenTimer && !task.completed ? (
+        <Pressable
+          accessibilityHint="El tiempo se registra sin completar la tarea"
+          accessibilityLabel={`Cronometrar ${task.title}`}
+          accessibilityRole="button"
+          onPress={onOpenTimer}
+          style={({ pressed }) => [
+            styles.focusAction,
+            {
+              backgroundColor: theme.colors.surfaceMuted,
+              borderColor: theme.colors.border,
+              opacity: pressed ? 0.72 : 1,
+            },
+          ]}
+        >
+          <Timer color={theme.colors.primary} size={17} />
+          <Text color="primary" variant="label">
+            Registrar tiempo
+          </Text>
+        </Pressable>
+      ) : null}
       {task.subtasks.length > 0 ? (
         <View
           style={[styles.subtasks, { borderTopColor: theme.colors.border }]}
@@ -619,6 +592,16 @@ const styles = StyleSheet.create({
     gap: 8,
     minHeight: 48,
     paddingHorizontal: 18,
+  },
+  focusAction: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 7,
+    minHeight: 44,
+    paddingHorizontal: 14,
   },
   completedText: { opacity: 0.55, textDecorationLine: 'line-through' },
   details: { gap: 8, marginLeft: 60 },

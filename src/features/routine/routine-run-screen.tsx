@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -20,6 +20,7 @@ import {
   ProgressOrbit,
   Text,
 } from '@/components/core';
+import { FeedbackSheet } from '@/components/core/feedback-overlay';
 import { useTheme } from '@/design';
 import { useAtlasApp } from '@/features/atlas';
 
@@ -52,6 +53,7 @@ export function RoutineRunScreen() {
   const step = routine?.steps[index];
   const [remaining, setRemaining] = useState(step?.durationSeconds ?? 0);
   const [timerRunning, setTimerRunning] = useState(false);
+  const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
 
   useEffect(() => {
     if (routine) startRoutine(routine.id);
@@ -104,24 +106,6 @@ export function RoutineRunScreen() {
     navigateToStep(index + 1);
   };
 
-  const confirmReset = () => {
-    Alert.alert(
-      'Reiniciar rutina',
-      'Se desmarcarán todos los pasos de esta ejecución.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Reiniciar',
-          style: 'destructive',
-          onPress: () => {
-            resetRoutine(routine.id);
-            navigateToStep(0);
-          },
-        },
-      ],
-    );
-  };
-
   return (
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
@@ -157,7 +141,7 @@ export function RoutineRunScreen() {
         <IconButton
           accessibilityLabel="Reiniciar rutina"
           icon={RotateCcw}
-          onPress={confirmReset}
+          onPress={() => setResetConfirmationOpen(true)}
           variant="ghost"
         />
       </View>
@@ -295,6 +279,24 @@ export function RoutineRunScreen() {
           size="lg"
         />
       </View>
+      <FeedbackSheet
+        actions={[
+          {
+            label: 'Reiniciar rutina',
+            variant: 'danger',
+            onPress: () => {
+              resetRoutine(routine.id);
+              navigateToStep(0);
+              setResetConfirmationOpen(false);
+            },
+          },
+        ]}
+        message="Se desmarcarán todos los pasos de esta ejecución."
+        onClose={() => setResetConfirmationOpen(false)}
+        title="Reiniciar rutina"
+        tone="danger"
+        visible={resetConfirmationOpen}
+      />
     </SafeAreaView>
   );
 }

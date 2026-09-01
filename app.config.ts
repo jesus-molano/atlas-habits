@@ -12,6 +12,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'automatic',
   android: {
     allowBackup: false,
+    softwareKeyboardLayoutMode: 'resize',
     package: 'atlas_habits.com',
     versionCode: 2,
     ...(googleServicesFile ? { googleServicesFile } : {}),

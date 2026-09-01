@@ -1,3 +1,4 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   Bell,
@@ -11,10 +12,11 @@ import {
   Route,
   Trash2,
 } from 'lucide-react-native';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
-  Alert,
+  Keyboard,
   KeyboardAvoidingView,
+  type LayoutChangeEvent,
   Platform,
   Pressable,
   ScrollView,
@@ -25,6 +27,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button, Card, IconButton, Text } from '@/components/core';
+import {
+  AtlasCalendarSheet,
+  FeedbackSheet,
+  InlineFeedback,
+} from '@/components/core/feedback-overlay';
 import { useTheme } from '@/design';
 import {
   createDefaultSchedule,
@@ -50,6 +57,9 @@ import {
 } from './form-validation';
 
 type CreateKind = CreateItemDraft['kind'];
+
+type ValidationSection =
+  'identity' | 'measure' | 'task' | 'routine' | 'schedule' | 'reminders';
 
 type DraftLine = {
   id: string;
@@ -120,6 +130,85 @@ function SwitchRow({
         value={value}
       />
     </Pressable>
+  );
+}
+
+function PickerField({
+  label,
+  mode,
+  value,
+  onChange,
+  error,
+}: {
+  label: string;
+  mode: 'date' | 'time';
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const normalizedDate = normalizeLocalDate(value);
+  const pickerValue = (() => {
+    const date = new Date();
+    const [hour, minute] = (normalizeLocalTime(value) ?? '09:00')
+      .split(':')
+      .map(Number);
+    date.setHours(hour, minute, 0, 0);
+    return date;
+  })();
+  const displayValue =
+    mode === 'date' && normalizedDate
+      ? new Date(`${normalizedDate}T12:00:00`).toLocaleDateString('es-ES', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        })
+      : value;
+
+  return (
+    <View style={styles.pickerField}>
+      <Text variant="label">{label}</Text>
+      <Button
+        fullWidth
+        label={
+          displayValue ||
+          (mode === 'date' ? 'Seleccionar fecha' : 'Seleccionar hora')
+        }
+        onPress={() => setOpen(true)}
+        variant="secondary"
+      />
+      {open && mode === 'time' ? (
+        <DateTimePicker
+          display="clock"
+          mode="time"
+          onDismiss={() => setOpen(false)}
+          onValueChange={(_event, next) => {
+            setOpen(false);
+            onChange(
+              `${String(next.getHours()).padStart(2, '0')}:${String(next.getMinutes()).padStart(2, '0')}`,
+            );
+          }}
+          value={pickerValue}
+        />
+      ) : null}
+      <AtlasCalendarSheet
+        allowClear
+        initialMonth={normalizedDate ?? localDateToday()}
+        onClose={() => setOpen(false)}
+        onConfirm={(next) => {
+          onChange(next ?? '');
+          setOpen(false);
+        }}
+        title={label}
+        value={normalizedDate}
+        visible={open && mode === 'date'}
+      />
+      {error ? (
+        <Text tone="danger" variant="caption">
+          {error}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -220,14 +309,24 @@ function DraftLines({
               selected={line.required}
             />
             {kind === 'steps' ? (
-              <View style={styles.durationField}>
-                <FormField
-                  keyboardType="number-pad"
-                  label="Temporizador"
-                  onChangeText={(minutes) => update(line.id, { minutes })}
-                  placeholder="min"
-                  value={line.minutes}
-                />
+              <View style={styles.stepDuration}>
+                <Text tone="muted" variant="caption">
+                  Temporizador
+                </Text>
+                <View style={styles.choices}>
+                  {[0, 1, 2, 5, 10, 15, 20].map((minutes) => (
+                    <ChoiceChip
+                      key={minutes}
+                      label={minutes === 0 ? 'Sin tiempo' : `${minutes} min`}
+                      onPress={() =>
+                        update(line.id, {
+                          minutes: minutes === 0 ? '' : String(minutes),
+                        })
+                      }
+                      selected={(Number(line.minutes) || 0) === minutes}
+                    />
+                  ))}
+                </View>
               </View>
             ) : null}
           </View>
@@ -275,6 +374,7 @@ function ReminderLines({
                   reminders.map((reminder) => reminder.time),
                 ),
                 enabled: true,
+                exactAlarm: false,
                 snoozeMinutes: 10,
               },
             ])
@@ -292,14 +392,11 @@ function ReminderLines({
         >
           <View style={styles.twoColumns}>
             <View style={styles.column}>
-              <FormField
-                autoCapitalize="none"
-                autoCorrect={false}
+              <PickerField
                 error={timeErrors[reminder.id]}
                 label={`Hora ${index + 1}`}
-                maxLength={5}
-                onChangeText={(time) => update(reminder.id, { time })}
-                placeholder="09:00"
+                mode="time"
+                onChange={(time) => update(reminder.id, { time })}
                 value={reminder.time}
               />
             </View>
@@ -322,16 +419,47 @@ function ReminderLines({
               variant="danger"
             />
           </View>
+          <View accessibilityRole="radiogroup" style={styles.choices}>
+            <ChoiceChip
+              label="Flexible · recomendado"
+              onPress={() => update(reminder.id, { exactAlarm: false })}
+              selected={reminder.exactAlarm !== true}
+            />
+            <ChoiceChip
+              label="Hora exacta"
+              onPress={() => update(reminder.id, { exactAlarm: true })}
+              selected={reminder.exactAlarm === true}
+            />
+          </View>
+          <Text tone="muted" variant="caption">
+            El modo flexible ahorra permisos y puede tener un pequeño retraso.
+          </Text>
         </Card>
       ))}
     </View>
   );
 }
 
+const unitPresets = ['veces', 'vasos', 'páginas', 'km', 'repeticiones'];
+const countTargetPresets = [1, 2, 3, 5, 8, 10];
+const durationTargetPresets = [5, 10, 15, 20, 30, 45, 60];
+const intervalPresets = [2, 3, 7, 14, 30];
+const quotaPresets = [1, 2, 3, 5, 7, 10];
+
 export function CreateScreen() {
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
+  const [sectionOffsets, setSectionOffsets] = useState<
+    Partial<Record<ValidationSection, number>>
+  >({});
   const params = useLocalSearchParams<{ type?: string; id?: string }>();
-  const { snapshot, createItem, updateItem, deleteItem } = useAtlasApp();
+  const {
+    snapshot,
+    createItem,
+    updateItem,
+    deleteItem,
+    requestNotificationAccess,
+  } = useAtlasApp();
   const existing = [
     ...snapshot.habits,
     ...snapshot.tasks,
@@ -351,10 +479,18 @@ export function CreateScreen() {
   const existingRoutine = existing?.kind === 'routine' ? existing : undefined;
   const initialSchedule = existing?.schedule ?? createDefaultSchedule();
   const dueParts = existingTask?.dueAt?.split(' · ') ?? [];
+  const deadlineParts = existingTask?.deadlineAt?.split(' · ') ?? [];
   const [title, setTitle] = useState(existing?.title ?? '');
   const [notes, setNotes] = useState(existing?.notes ?? '');
   const [category, setCategory] = useState(existing?.category ?? '');
   const [tags, setTags] = useState(existing?.tags.join(', ') ?? '');
+  const [customCategoryOpen, setCustomCategoryOpen] = useState(false);
+  const [customTagOpen, setCustomTagOpen] = useState(false);
+  const [customTag, setCustomTag] = useState('');
+  const [showMoreOptions, setShowMoreOptions] = useState(Boolean(existing));
+  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [formFeedback, setFormFeedback] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [scheduleKind, setScheduleKind] = useState<AtlasSchedule['kind']>(
     initialSchedule.kind === 'once' ? 'daily' : initialSchedule.kind,
   );
@@ -369,6 +505,10 @@ export function CreateScreen() {
   const [intervalEvery, setIntervalEvery] = useState(
     initialSchedule.kind === 'interval_days' ? `${initialSchedule.every}` : '2',
   );
+  const [customIntervalOpen, setCustomIntervalOpen] = useState(
+    initialSchedule.kind === 'interval_days' &&
+      !intervalPresets.includes(initialSchedule.every),
+  );
   const [intervalAnchor, setIntervalAnchor] = useState(
     initialSchedule.kind === 'interval_days'
       ? initialSchedule.anchorDate
@@ -376,6 +516,10 @@ export function CreateScreen() {
   );
   const [quota, setQuota] = useState(
     initialSchedule.kind === 'period_quota' ? `${initialSchedule.quota}` : '3',
+  );
+  const [customQuotaOpen, setCustomQuotaOpen] = useState(
+    initialSchedule.kind === 'period_quota' &&
+      !quotaPresets.includes(initialSchedule.quota),
   );
   const [quotaPeriod, setQuotaPeriod] = useState<'week' | 'month'>(
     initialSchedule.kind === 'period_quota' ? initialSchedule.period : 'week',
@@ -386,7 +530,15 @@ export function CreateScreen() {
   const [reminders, setReminders] = useState<DraftReminder[]>(
     existing?.reminders.length
       ? existing.reminders
-      : [{ id: draftId(), time: '09:00', enabled: true, snoozeMinutes: 10 }],
+      : [
+          {
+            id: draftId(),
+            time: '09:00',
+            enabled: true,
+            exactAlarm: false,
+            snoozeMinutes: 10,
+          },
+        ],
   );
   const [metric, setMetric] = useState<HabitMetric>(
     existingHabit?.metric ?? 'boolean',
@@ -405,7 +557,15 @@ export function CreateScreen() {
   );
   const [dueDate, setDueDate] = useState(dueParts[0] ?? '');
   const [dueTime, setDueTime] = useState(dueParts[1] ?? '');
-  const [deadline, setDeadline] = useState(existingTask?.deadlineAt ?? '');
+  const [deadlineEnabled, setDeadlineEnabled] = useState(
+    Boolean(existingTask?.deadlineAt),
+  );
+  const [deadlineDate, setDeadlineDate] = useState(
+    deadlineParts[0] ?? dueParts[0] ?? '',
+  );
+  const [deadlineTime, setDeadlineTime] = useState(
+    deadlineParts[1] ?? dueParts[1] ?? '',
+  );
   const [recurring, setRecurring] = useState(existingTask?.recurring ?? false);
   const [subtasks, setSubtasks] = useState<DraftLine[]>(
     existingTask?.subtasks.length
@@ -427,11 +587,41 @@ export function CreateScreen() {
       : [{ id: draftId(), title: '', required: true, minutes: '' }],
   );
   const [submitted, setSubmitted] = useState(false);
+  const categoryOptions = Array.from(
+    new Set(
+      [...snapshot.habits, ...snapshot.tasks, ...snapshot.routines]
+        .map((item) => item.category)
+        .filter((value): value is string => Boolean(value?.trim())),
+    ),
+  ).slice(0, 8);
+  const tagOptions = Array.from(
+    new Set(
+      [...snapshot.habits, ...snapshot.tasks, ...snapshot.routines].flatMap(
+        (item) => item.tags,
+      ),
+    ),
+  ).slice(0, 12);
+  const selectedTags = tags
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  const toggleTag = (tag: string) => {
+    const next = selectedTags.includes(tag)
+      ? selectedTags.filter((value) => value !== tag)
+      : [...selectedTags, tag];
+    setTags(next.join(', '));
+  };
+  const chooseMetric = (nextMetric: HabitMetric) => {
+    if (nextMetric === metric) return;
+    setMetric(nextMetric);
+    setTarget(nextMetric === 'duration' ? '20' : '1');
+    if (nextMetric === 'count' && !unitPresets.includes(unit)) setUnit('veces');
+  };
   const hasScheduleEditor = kind === 'habit' || kind === 'routine' || recurring;
   const normalizedDueDate = normalizeLocalDate(dueDate);
   const normalizedDueTime = normalizeLocalTime(dueTime);
-  const normalizedDeadline = deadline.trim()
-    ? normalizeLocalDateTime(deadline)
+  const normalizedDeadline = deadlineEnabled
+    ? normalizeLocalDateTime(`${deadlineDate} · ${deadlineTime}`)
     : undefined;
   const normalizedStartDate = normalizeLocalDate(scheduleStartDate);
   const normalizedAnchorDate = normalizeLocalDate(intervalAnchor);
@@ -477,8 +667,8 @@ export function CreateScreen() {
       ? 'Usa HH:MM entre 00:00 y 23:59.'
       : undefined;
   const deadlineError =
-    submitted && kind === 'task' && deadline.trim() && !normalizedDeadline
-      ? 'Usa AAAA-MM-DD · HH:MM o déjalo vacío.'
+    submitted && kind === 'task' && deadlineEnabled && !normalizedDeadline
+      ? 'Selecciona una fecha y una hora válidas.'
       : undefined;
   const scheduleStartError =
     submitted && hasScheduleEditor && !normalizedStartDate
@@ -526,51 +716,91 @@ export function CreateScreen() {
       : undefined;
 
   const validationMessages = [
-    !title.trim() ? 'Escribe un nombre.' : undefined,
+    !title.trim()
+      ? { section: 'identity' as const, message: 'Escribe un nombre.' }
+      : undefined,
     kind === 'task' && !normalizedDueDate
-      ? 'Revisa la fecha de la tarea.'
+      ? { section: 'task' as const, message: 'Revisa la fecha de la tarea.' }
       : undefined,
     kind === 'task' && !normalizedDueTime
-      ? 'Revisa la hora de la tarea.'
+      ? { section: 'task' as const, message: 'Revisa la hora de la tarea.' }
       : undefined,
-    kind === 'task' && deadline.trim() && !normalizedDeadline
-      ? 'Revisa la fecha límite.'
+    kind === 'task' && deadlineEnabled && !normalizedDeadline
+      ? { section: 'task' as const, message: 'Revisa la fecha límite.' }
       : undefined,
     hasScheduleEditor && !normalizedStartDate
-      ? 'Revisa la fecha de inicio.'
+      ? { section: 'schedule' as const, message: 'Revisa la fecha de inicio.' }
       : undefined,
     hasScheduleEditor &&
     scheduleKind === 'weekdays' &&
     scheduleDays.length === 0
-      ? 'Selecciona al menos un día de repetición.'
+      ? {
+          section: 'schedule' as const,
+          message: 'Selecciona al menos un día de repetición.',
+        }
       : undefined,
     hasScheduleEditor && scheduleKind === 'interval_days' && !intervalEveryValue
-      ? 'Revisa el intervalo de días.'
+      ? {
+          section: 'schedule' as const,
+          message: 'Revisa el intervalo de días.',
+        }
       : undefined,
     hasScheduleEditor &&
     scheduleKind === 'interval_days' &&
     !normalizedAnchorDate
-      ? 'Revisa la fecha de ancla.'
+      ? { section: 'schedule' as const, message: 'Revisa la fecha de ancla.' }
       : undefined,
     hasScheduleEditor && scheduleKind === 'period_quota' && !quotaValue
-      ? 'Revisa el número de veces de la cuota.'
+      ? {
+          section: 'schedule' as const,
+          message: 'Revisa el número de veces de la cuota.',
+        }
       : undefined,
     kind === 'habit' && metric !== 'boolean' && !targetValue
-      ? 'Revisa el objetivo del hábito.'
+      ? {
+          section: 'measure' as const,
+          message: 'Revisa el objetivo del hábito.',
+        }
       : undefined,
     kind === 'habit' && graceMinutesValue === null
-      ? 'Revisa el margen de cierre.'
+      ? { section: 'measure' as const, message: 'Revisa el margen de cierre.' }
       : undefined,
     kind === 'routine' && !steps.some((step) => step.title.trim())
-      ? 'Añade al menos un paso a la rutina.'
+      ? {
+          section: 'routine' as const,
+          message: 'Añade al menos un paso a la rutina.',
+        }
       : undefined,
     reminderEnabled && reminders.length === 0
-      ? 'Añade una hora de recordatorio o desactiva «Avisarme».'
+      ? {
+          section: 'reminders' as const,
+          message: 'Añade una hora de recordatorio o desactiva «Avisarme».',
+        }
       : undefined,
     invalidReminder && reminders.length > 0
-      ? 'Corrige las horas de recordatorio repetidas o no válidas.'
+      ? {
+          section: 'reminders' as const,
+          message: 'Corrige las horas de recordatorio repetidas o no válidas.',
+        }
       : undefined,
-  ].filter((message): message is string => Boolean(message));
+  ].filter(
+    (
+      error,
+    ): error is Readonly<{
+      section: ValidationSection;
+      message: string;
+    }> => Boolean(error),
+  );
+
+  const rememberSection =
+    (section: ValidationSection) => (event: LayoutChangeEvent) => {
+      const offset = event.nativeEvent.layout.y;
+      setSectionOffsets((current) =>
+        current[section] === offset
+          ? current
+          : { ...current, [section]: offset },
+      );
+    };
 
   const submitLabel = useMemo(() => {
     if (existing) return 'Guardar cambios';
@@ -647,12 +877,34 @@ export function CreateScreen() {
     return { schedule, reminders: activeReminders };
   };
 
-  const save = () => {
+  const save = async () => {
     setSubmitted(true);
     const firstError = validationMessages[0];
     if (firstError) {
-      Alert.alert('Revisa el formulario', firstError);
+      if (firstError.section !== 'identity') Keyboard.dismiss();
+      setFormFeedback(firstError.message);
+      requestAnimationFrame(() => {
+        const offset = sectionOffsets[firstError.section] ?? 0;
+        scrollRef.current?.scrollTo({
+          animated: true,
+          y: Math.max(0, offset - 16),
+        });
+      });
       return;
+    }
+    Keyboard.dismiss();
+    setFormFeedback(null);
+    setSaving(true);
+    if (
+      reminderEnabled &&
+      snapshot.reminderCapability?.notifications !== 'granted'
+    ) {
+      const permission = await requestNotificationAccess();
+      if (!permission.ok) {
+        setFormFeedback(permission.message);
+        setSaving(false);
+        return;
+      }
     }
     const recurrence = buildSchedule();
     const common = {
@@ -712,26 +964,8 @@ export function CreateScreen() {
           })),
       });
     }
+    setSaving(false);
     router.back();
-  };
-
-  const confirmDelete = () => {
-    if (!existing) return;
-    Alert.alert(
-      `Eliminar “${existing.title}”`,
-      'Se eliminarán también su historial, recordatorios y configuración. Esta acción se sincronizará con tus otros dispositivos.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: () => {
-            deleteItem(existing.id);
-            router.back();
-          },
-        },
-      ],
-    );
   };
 
   return (
@@ -739,7 +973,8 @@ export function CreateScreen() {
       style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
         style={styles.flex}
       >
         <View
@@ -764,7 +999,9 @@ export function CreateScreen() {
 
         <ScrollView
           contentContainerStyle={styles.scrollContent}
+          keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          ref={scrollRef}
           showsVerticalScrollIndicator={false}
         >
           {!existing ? (
@@ -793,7 +1030,16 @@ export function CreateScreen() {
             </View>
           ) : null}
 
-          <View style={styles.formGroup}>
+          {formFeedback ? (
+            <InlineFeedback
+              message="Corrige el campo indicado. El formulario conserva tus cambios."
+              onClose={() => setFormFeedback(null)}
+              title={formFeedback}
+              tone="danger"
+            />
+          ) : null}
+
+          <View onLayout={rememberSection('identity')} style={styles.formGroup}>
             <Text tone="accent" variant="eyebrow">
               IDENTIDAD
             </Text>
@@ -813,37 +1059,107 @@ export function CreateScreen() {
               returnKeyType="next"
               value={title}
             />
-            <View style={styles.twoColumns}>
-              <View style={styles.column}>
-                <FormField
-                  label="Categoría"
-                  onChangeText={setCategory}
-                  placeholder="Bienestar"
-                  value={category}
-                />
-              </View>
-              <View style={styles.column}>
-                <FormField
-                  autoCapitalize="none"
-                  hint="Separa con comas."
-                  label="Etiquetas"
-                  onChangeText={setTags}
-                  placeholder="salud, mañana"
-                  value={tags}
-                />
-              </View>
-            </View>
-            <FormField
-              label="Notas"
-              multiline
-              onChangeText={setNotes}
-              placeholder="Contexto, intención o cualquier detalle útil."
-              value={notes}
+            <Button
+              fullWidth
+              label={showMoreOptions ? 'Ocultar opciones' : 'Más opciones'}
+              onPress={() => setShowMoreOptions((value) => !value)}
+              variant="ghost"
             />
+            {showMoreOptions ? (
+              <View style={styles.advancedOptions}>
+                <Text variant="label">Categoría</Text>
+                <View accessibilityRole="radiogroup" style={styles.choices}>
+                  <ChoiceChip
+                    label="Ninguna"
+                    onPress={() => {
+                      setCategory('');
+                      setCustomCategoryOpen(false);
+                    }}
+                    selected={!category}
+                  />
+                  {categoryOptions.map((value) => (
+                    <ChoiceChip
+                      key={value}
+                      label={value}
+                      onPress={() => {
+                        setCategory(value);
+                        setCustomCategoryOpen(false);
+                      }}
+                      selected={category === value}
+                    />
+                  ))}
+                  <ChoiceChip
+                    label="Nueva…"
+                    onPress={() => setCustomCategoryOpen(true)}
+                    selected={customCategoryOpen}
+                  />
+                </View>
+                {customCategoryOpen ? (
+                  <FormField
+                    label="Nueva categoría"
+                    onChangeText={setCategory}
+                    placeholder="Ej. Bienestar"
+                    value={category}
+                  />
+                ) : null}
+
+                <Text variant="label">Etiquetas</Text>
+                <View style={styles.choices}>
+                  {tagOptions.map((tag) => (
+                    <ChoiceChip
+                      key={tag}
+                      label={tag}
+                      onPress={() => toggleTag(tag)}
+                      selected={selectedTags.includes(tag)}
+                    />
+                  ))}
+                  <ChoiceChip
+                    label="Nueva…"
+                    onPress={() => setCustomTagOpen(true)}
+                    selected={customTagOpen}
+                  />
+                </View>
+                {customTagOpen ? (
+                  <View style={styles.customValueRow}>
+                    <View style={styles.column}>
+                      <FormField
+                        autoCapitalize="none"
+                        label="Nueva etiqueta"
+                        onChangeText={setCustomTag}
+                        placeholder="Ej. mañana"
+                        value={customTag}
+                      />
+                    </View>
+                    <Button
+                      disabled={!customTag.trim()}
+                      label="Añadir"
+                      onPress={() => {
+                        const value = customTag.trim();
+                        if (value && !selectedTags.includes(value))
+                          toggleTag(value);
+                        setCustomTag('');
+                        setCustomTagOpen(false);
+                      }}
+                      size="sm"
+                    />
+                  </View>
+                ) : null}
+                <FormField
+                  label="Notas"
+                  multiline
+                  onChangeText={setNotes}
+                  placeholder="Contexto, intención o un detalle útil."
+                  value={notes}
+                />
+              </View>
+            ) : null}
           </View>
 
           {kind === 'habit' ? (
-            <View style={styles.formGroup}>
+            <View
+              onLayout={rememberSection('measure')}
+              style={styles.formGroup}
+            >
               <Text tone="accent" variant="eyebrow">
                 MEDIDA
               </Text>
@@ -851,64 +1167,127 @@ export function CreateScreen() {
                 <ChoiceChip
                   icon={CheckCircle2}
                   label="Sí o no"
-                  onPress={() => setMetric('boolean')}
+                  onPress={() => chooseMetric('boolean')}
                   selected={metric === 'boolean'}
                 />
                 <ChoiceChip
                   icon={Hash}
                   label="Cantidad"
-                  onPress={() => setMetric('count')}
+                  onPress={() => chooseMetric('count')}
                   selected={metric === 'count'}
                 />
                 <ChoiceChip
                   icon={Clock3}
                   label="Duración"
-                  onPress={() => setMetric('duration')}
+                  onPress={() => chooseMetric('duration')}
                   selected={metric === 'duration'}
                 />
               </View>
               {metric !== 'boolean' ? (
-                <View style={styles.twoColumns}>
-                  <View style={styles.column}>
+                <View style={styles.advancedOptions}>
+                  <Text variant="label">
+                    {metric === 'duration' ? 'Objetivo en minutos' : 'Objetivo'}
+                  </Text>
+                  <View style={styles.choices}>
+                    {(metric === 'duration'
+                      ? durationTargetPresets
+                      : countTargetPresets
+                    ).map((value) => (
+                      <ChoiceChip
+                        key={value}
+                        label={String(value)}
+                        onPress={() => setTarget(String(value))}
+                        selected={Number(target) === value}
+                      />
+                    ))}
+                    <ChoiceChip
+                      label="Otro"
+                      onPress={() => setTarget('')}
+                      selected={
+                        !(
+                          metric === 'duration'
+                            ? durationTargetPresets
+                            : countTargetPresets
+                        ).includes(Number(target))
+                      }
+                    />
+                  </View>
+                  {!(
+                    metric === 'duration'
+                      ? durationTargetPresets
+                      : countTargetPresets
+                  ).includes(Number(target)) ? (
                     <FormField
                       error={targetError}
                       keyboardType="decimal-pad"
-                      label={
-                        metric === 'duration'
-                          ? 'Objetivo (minutos)'
-                          : 'Objetivo'
-                      }
+                      label="Objetivo personalizado"
                       onChangeText={setTarget}
                       placeholder={metric === 'duration' ? '20' : '8'}
                       value={target}
                     />
-                  </View>
+                  ) : null}
                   {metric === 'count' ? (
-                    <View style={styles.column}>
-                      <FormField
-                        label="Unidad"
-                        onChangeText={setUnit}
-                        placeholder="vasos"
-                        value={unit}
-                      />
-                    </View>
+                    <>
+                      <Text variant="label">Unidad</Text>
+                      <View style={styles.choices}>
+                        {unitPresets.map((value) => (
+                          <ChoiceChip
+                            key={value}
+                            label={value}
+                            onPress={() => setUnit(value)}
+                            selected={unit === value}
+                          />
+                        ))}
+                        <ChoiceChip
+                          label="Otra"
+                          onPress={() => setUnit('')}
+                          selected={!unitPresets.includes(unit)}
+                        />
+                      </View>
+                      {!unitPresets.includes(unit) ? (
+                        <FormField
+                          label="Unidad personalizada"
+                          onChangeText={setUnit}
+                          placeholder="Ej. vasos"
+                          value={unit}
+                        />
+                      ) : null}
+                    </>
                   ) : null}
                 </View>
               ) : null}
-              <FormField
-                error={graceMinutesError}
-                hint="Durante este margen aún puedes registrarlo sin que el día cuente como perdido."
-                keyboardType="number-pad"
-                label="Margen de cierre (minutos)"
-                onChangeText={setGraceMinutes}
-                placeholder="60"
-                value={graceMinutes}
-              />
+              {showMoreOptions ? (
+                <View style={styles.advancedOptions}>
+                  <Text variant="label">Margen de cierre</Text>
+                  <View style={styles.choices}>
+                    {[
+                      [0, 'Sin margen'],
+                      [15, '15 min'],
+                      [30, '30 min'],
+                      [60, '1 h'],
+                      [120, '2 h'],
+                      [1440, '1 día'],
+                    ].map(([value, label]) => (
+                      <ChoiceChip
+                        key={value}
+                        label={String(label)}
+                        onPress={() => setGraceMinutes(String(value))}
+                        selected={Number(graceMinutes) === value}
+                      />
+                    ))}
+                  </View>
+                  {graceMinutesError ? (
+                    <Text tone="danger" variant="caption">
+                      {graceMinutesError}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           ) : null}
 
           {kind === 'task' ? (
-            <View style={styles.formGroup}>
+            <View onLayout={rememberSection('task')} style={styles.formGroup}>
               <Text tone="accent" variant="eyebrow">
                 FECHA Y PRIORIDAD
               </Text>
@@ -931,32 +1310,66 @@ export function CreateScreen() {
               </View>
               <View style={styles.twoColumns}>
                 <View style={styles.column}>
-                  <FormField
+                  <PickerField
                     error={dueDateError}
                     label="Fecha"
-                    onChangeText={setDueDate}
-                    placeholder="AAAA-MM-DD"
+                    mode="date"
+                    onChange={setDueDate}
                     value={dueDate}
                   />
                 </View>
                 <View style={styles.column}>
-                  <FormField
+                  <PickerField
                     error={dueTimeError}
                     label="Hora"
-                    onChangeText={setDueTime}
-                    placeholder="18:30"
+                    mode="time"
+                    onChange={setDueTime}
                     value={dueTime}
                   />
                 </View>
               </View>
-              <FormField
-                error={deadlineError}
-                hint="Opcional. Puede ser distinta de la hora programada."
-                label="Fecha límite"
-                onChangeText={setDeadline}
-                placeholder="AAAA-MM-DD · 20:00"
-                value={deadline}
-              />
+              {showMoreOptions ? (
+                <View style={styles.advancedOptions}>
+                  <Text variant="label">Fecha límite</Text>
+                  <View accessibilityRole="radiogroup" style={styles.choices}>
+                    <ChoiceChip
+                      label="Sin límite"
+                      onPress={() => setDeadlineEnabled(false)}
+                      selected={!deadlineEnabled}
+                    />
+                    <ChoiceChip
+                      label="Definir límite"
+                      onPress={() => {
+                        setDeadlineDate((value) => value || dueDate);
+                        setDeadlineTime((value) => value || dueTime);
+                        setDeadlineEnabled(true);
+                      }}
+                      selected={deadlineEnabled}
+                    />
+                  </View>
+                  {deadlineEnabled ? (
+                    <View style={styles.twoColumns}>
+                      <View style={styles.column}>
+                        <PickerField
+                          error={deadlineError}
+                          label="Fecha límite"
+                          mode="date"
+                          onChange={setDeadlineDate}
+                          value={deadlineDate}
+                        />
+                      </View>
+                      <View style={styles.column}>
+                        <PickerField
+                          label="Hora límite"
+                          mode="time"
+                          onChange={setDeadlineTime}
+                          value={deadlineTime}
+                        />
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
               <SwitchRow
                 description="Vuelve a crear la tarea según el patrón elegido."
                 icon={Repeat2}
@@ -975,18 +1388,21 @@ export function CreateScreen() {
             />
           ) : null}
           {kind === 'routine' ? (
-            <>
+            <View onLayout={rememberSection('routine')}>
               <DraftLines kind="steps" lines={steps} onChange={setSteps} />
               {stepsError ? (
                 <Text tone="danger" variant="caption">
                   {stepsError}
                 </Text>
               ) : null}
-            </>
+            </View>
           ) : null}
 
           {kind === 'habit' || kind === 'routine' || recurring ? (
-            <View style={styles.formGroup}>
+            <View
+              onLayout={rememberSection('schedule')}
+              style={styles.formGroup}
+            >
               <Text tone="accent" variant="eyebrow">
                 REPETICIÓN
               </Text>
@@ -1012,12 +1428,11 @@ export function CreateScreen() {
                   selected={scheduleKind === 'period_quota'}
                 />
               </View>
-              <FormField
+              <PickerField
                 error={scheduleStartError}
-                hint="La recurrencia no crea ocurrencias antes de esta fecha."
                 label="Empieza el"
-                onChangeText={setScheduleStartDate}
-                placeholder="AAAA-MM-DD"
+                mode="date"
+                onChange={setScheduleStartDate}
                 value={scheduleStartDate}
               />
               {scheduleKind === 'weekdays' ? (
@@ -1048,26 +1463,52 @@ export function CreateScreen() {
                 </>
               ) : null}
               {scheduleKind === 'interval_days' ? (
-                <View style={styles.twoColumns}>
-                  <View style={styles.column}>
+                <View style={styles.advancedOptions}>
+                  <Text variant="label">Cada cuántos días</Text>
+                  <View style={styles.choices}>
+                    {intervalPresets.map((value) => (
+                      <ChoiceChip
+                        key={value}
+                        label={String(value)}
+                        onPress={() => {
+                          setIntervalEvery(String(value));
+                          setCustomIntervalOpen(false);
+                        }}
+                        selected={
+                          !customIntervalOpen && Number(intervalEvery) === value
+                        }
+                      />
+                    ))}
+                    <ChoiceChip
+                      label="Otro"
+                      onPress={() => setCustomIntervalOpen(true)}
+                      selected={customIntervalOpen}
+                    />
+                  </View>
+                  {customIntervalOpen ? (
                     <FormField
                       error={intervalEveryError}
                       keyboardType="number-pad"
-                      label="Cada cuántos días"
+                      label="Intervalo personalizado"
                       onChangeText={setIntervalEvery}
-                      placeholder="2"
+                      placeholder="Ej. 4"
                       value={intervalEvery}
                     />
-                  </View>
-                  <View style={styles.column}>
-                    <FormField
-                      error={intervalAnchorError}
-                      label="Fecha de ancla"
-                      onChangeText={setIntervalAnchor}
-                      placeholder="AAAA-MM-DD"
-                      value={intervalAnchor}
-                    />
-                  </View>
+                  ) : null}
+                  {intervalEveryError ? (
+                    customIntervalOpen ? null : (
+                      <Text tone="danger" variant="caption">
+                        {intervalEveryError}
+                      </Text>
+                    )
+                  ) : null}
+                  <PickerField
+                    error={intervalAnchorError}
+                    label="Fecha de ancla"
+                    mode="date"
+                    onChange={setIntervalAnchor}
+                    value={intervalAnchor}
+                  />
                 </View>
               ) : null}
               {scheduleKind === 'period_quota' ? (
@@ -1084,21 +1525,51 @@ export function CreateScreen() {
                       selected={quotaPeriod === 'month'}
                     />
                   </View>
-                  <FormField
-                    error={quotaError}
-                    hint="Las distintas horas no multiplican esta cuota."
-                    keyboardType="number-pad"
-                    label="Número de veces"
-                    onChangeText={setQuota}
-                    placeholder="3"
-                    value={quota}
-                  />
+                  <Text variant="label">Número de veces</Text>
+                  <View style={styles.choices}>
+                    {quotaPresets.map((value) => (
+                      <ChoiceChip
+                        key={value}
+                        label={String(value)}
+                        onPress={() => {
+                          setQuota(String(value));
+                          setCustomQuotaOpen(false);
+                        }}
+                        selected={!customQuotaOpen && Number(quota) === value}
+                      />
+                    ))}
+                    <ChoiceChip
+                      label="Otro"
+                      onPress={() => setCustomQuotaOpen(true)}
+                      selected={customQuotaOpen}
+                    />
+                  </View>
+                  {customQuotaOpen ? (
+                    <FormField
+                      error={quotaError}
+                      keyboardType="number-pad"
+                      label="Cuota personalizada"
+                      onChangeText={setQuota}
+                      placeholder="Ej. 4"
+                      value={quota}
+                    />
+                  ) : null}
+                  {quotaError ? (
+                    customQuotaOpen ? null : (
+                      <Text tone="danger" variant="caption">
+                        {quotaError}
+                      </Text>
+                    )
+                  ) : null}
                 </>
               ) : null}
             </View>
           ) : null}
 
-          <View style={styles.formGroup}>
+          <View
+            onLayout={rememberSection('reminders')}
+            style={styles.formGroup}
+          >
             <Text tone="accent" variant="eyebrow">
               RECORDATORIOS Y FRANJAS
             </Text>
@@ -1136,17 +1607,47 @@ export function CreateScreen() {
             },
           ]}
         >
-          <Button fullWidth label={submitLabel} onPress={save} size="lg" />
+          <Button
+            fullWidth
+            label={submitLabel}
+            loading={saving}
+            onPress={() => void save()}
+            size="lg"
+          />
           {existing ? (
             <Button
               fullWidth
               label="Eliminar este elemento"
               leadingIcon={Trash2}
-              onPress={confirmDelete}
+              onPress={() => setDeleteConfirmationOpen(true)}
               variant="danger"
             />
           ) : null}
         </View>
+        <FeedbackSheet
+          actions={
+            existing
+              ? [
+                  {
+                    label: 'Eliminar definitivamente',
+                    variant: 'danger',
+                    onPress: () => {
+                      deleteItem(existing.id);
+                      setDeleteConfirmationOpen(false);
+                      router.back();
+                    },
+                  },
+                ]
+              : []
+          }
+          message="También se eliminarán su historial, recordatorios y configuración. La eliminación se sincronizará si has conectado Google."
+          onClose={() => setDeleteConfirmationOpen(false)}
+          title={
+            existing ? `Eliminar “${existing.title}”` : 'Eliminar elemento'
+          }
+          tone="danger"
+          visible={deleteConfirmationOpen}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1164,10 +1665,16 @@ const styles = StyleSheet.create({
   },
   headerCopy: { flex: 1, gap: 1 },
   headerSpacer: { width: 48 },
-  scrollContent: { gap: 28, paddingHorizontal: 16, paddingTop: 18 },
+  scrollContent: {
+    gap: 24,
+    paddingBottom: 24,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
   kindPicker: { flexDirection: 'row', gap: 8 },
   kindChip: { flex: 1, paddingHorizontal: 8 },
   formGroup: { gap: 14 },
+  advancedOptions: { gap: 12 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   twoColumns: { flexDirection: 'row', gap: 12 },
   column: { flex: 1, minWidth: 0 },
@@ -1205,7 +1712,9 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingLeft: 41,
   },
-  durationField: { minWidth: 130 },
+  stepDuration: { flex: 1, gap: 8, minWidth: '100%' },
+  pickerField: { gap: 8 },
+  customValueRow: { alignItems: 'flex-end', flexDirection: 'row', gap: 10 },
   reminderCard: { gap: 8 },
   reminderDelete: { marginTop: 28 },
   footer: {

@@ -80,6 +80,26 @@ describe('sync error copy', () => {
 });
 
 describe('OptionalAtlasSync connection failures', () => {
+  it('returns a structured issue when session restoration fails', async () => {
+    const { auth, provider } = remoteProvider();
+    auth.restoreSession.mockRejectedValueOnce({
+      code: 'auth/network-request-failed',
+    });
+    const sync = new OptionalAtlasSync(
+      {} as SQLiteDatabase,
+      'device-test',
+      provider,
+    );
+
+    const state = await sync.state();
+
+    expect(state).toMatchObject({
+      status: 'error',
+      issue: { kind: 'network', remediation: 'network' },
+    });
+    expect(state.message).toContain('conexión');
+  });
+
   it('keeps a connection after an offline first sync so it can retry later', async () => {
     const { auth, provider } = remoteProvider();
     const sync = new OptionalAtlasSync(

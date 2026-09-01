@@ -57,12 +57,14 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
     "@types/node": "^26.4.0",
     "@types/react": "~19.2.2",
     "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^9.39.5",
     "eslint-config-expo": "^57.0.2",
     "eslint-import-resolver-typescript": "^3.10.1",
+    "firebase-tools": "15.28.2",
     "prettier": "^3.9.6",
     "typescript": "~6.0.3",
     "vitest": "^4.1.11"
@@ -78,6 +80,7 @@
     "start": "expo start --dev-client",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-atlas-habits --config firebase/firebase.json \"vitest run firebase/firestore.rules.test.ts\"",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "web": "expo start --web"

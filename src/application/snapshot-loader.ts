@@ -1,10 +1,8 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import {
-  CommandGateway,
-  DashboardRepository,
-  LOCAL_WORKSPACE_ID,
-} from '../data';
+import type { CommandGateway } from '../data/command-gateway';
+import { DashboardRepository } from '../data/repositories/dashboard-repository';
+import { LOCAL_WORKSPACE_ID } from '../data/types';
 import type { DashboardSectionId, SyncState } from '../features/atlas/types';
 
 import { localDateFromDate, recentLocalDates } from './date-time';
@@ -139,6 +137,8 @@ export async function loadAtlasSnapshotFromSQLite({
     taskSubtaskEntries,
     routineStepEntries,
     reminderEntries,
+    activeTimer,
+    legacyTimerItemIds,
   ] = await Promise.all([
     database.getAllAsync<TagRow>(
       `SELECT id, name FROM tags
@@ -169,6 +169,8 @@ export async function loadAtlasSnapshotFromSQLite({
           [itemId, await gateway.queries.listReminderRules(itemId)] as const,
       ),
     ),
+    gateway.progress.getActiveTimer(),
+    gateway.progress.listLegacyTimerItemIds(),
   ]);
 
   const routineRunStepEntries = await Promise.all(
@@ -178,7 +180,7 @@ export async function loadAtlasSnapshotFromSQLite({
     ),
   );
 
-  return mapDashboardToAtlasSnapshot({
+  const snapshot = mapDashboardToAtlasSnapshot({
     day,
     historyDays,
     now,
@@ -196,4 +198,18 @@ export async function loadAtlasSnapshotFromSQLite({
       taskSubtasksByTaskId: recordFromEntries(taskSubtaskEntries),
     },
   });
+  return {
+    ...snapshot,
+    activeTimer: activeTimer
+      ? {
+          itemId: activeTimer.itemId,
+          itemType: activeTimer.itemType,
+          title: activeTimer.title,
+          startedAt: activeTimer.startedAt,
+          runningSince: activeTimer.runningSince ?? undefined,
+          elapsedSeconds: activeTimer.elapsedSeconds,
+        }
+      : undefined,
+    legacyTimerItemIds,
+  };
 }

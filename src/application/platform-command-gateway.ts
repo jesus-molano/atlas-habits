@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import {
@@ -20,7 +21,10 @@ import {
 
 import { localDateFromDate, localDateFromOccurrenceKey } from './date-time';
 import { getAtlasDeviceId } from './device-identity';
-import { rescheduleAtlasRemindersAsync } from './reminder-scheduler';
+import {
+  REMINDERS_ENABLED_STORAGE_KEY,
+  rescheduleAtlasRemindersAsync,
+} from './reminder-scheduler';
 
 type NotificationIdRow = { notification_id: string };
 
@@ -50,6 +54,18 @@ const defaultDependencies: SQLitePlatformCommandGatewayDependencies = {
 
 function dispatchStatus(replayed: boolean): CommandDispatchResult {
   return { status: replayed ? 'duplicate' : 'applied' };
+}
+
+async function remindersAreEnabled(): Promise<boolean> {
+  try {
+    return (
+      (await AsyncStorage.getItem(REMINDERS_ENABLED_STORAGE_KEY)) !== 'false'
+    );
+  } catch {
+    // Storage is auxiliary to the authoritative command. Prefer not to create
+    // alarms when the local preference cannot be read.
+    return false;
+  }
 }
 
 async function cancelOccurrenceNotifications(
@@ -310,8 +326,9 @@ export class SQLitePlatformCommandGateway implements PlatformCommandGateway {
       );
       // The state mutation above is authoritative. Alarm reconciliation is
       // auxiliary and must not turn a committed completion into an error.
+      const remindersEnabled = await remindersAreEnabled();
       await this.dependencies
-        .rescheduleReminders({ database })
+        .rescheduleReminders({ database, enabled: remindersEnabled })
         .catch(() => undefined);
       return dispatchStatus(replayed);
     }
@@ -321,10 +338,20 @@ export class SQLitePlatformCommandGateway implements PlatformCommandGateway {
     if (!Number.isFinite(fireAt.getTime()))
       throw new Error('snoozeUntil is not a valid date.');
     const notificationId = `atlas-snooze-${encodeURIComponent(envelope.idempotencyKey)}`;
-    const titleRow = await database.getFirstAsync<{ title: string }>(
-      'SELECT title FROM items WHERE id = ? AND deleted_at IS NULL',
-      [command.targetId],
+    const definition = await database.getFirstAsync<{
+      title: string;
+      exact_alarm: number;
+    }>(
+      `SELECT i.title, rr.exact_alarm
+         FROM reminder_rules rr
+         JOIN items i ON i.id = rr.item_id
+        WHERE rr.id = ?
+          AND rr.item_id = ?
+          AND rr.deleted_at IS NULL
+          AND i.deleted_at IS NULL`,
+      [command.reminderId, command.targetId],
     );
+    if (!definition) throw new Error('El recordatorio ya no existe.');
     const payload = {
       reminderId: command.reminderId,
       reminderRuleId: command.reminderId,
@@ -335,58 +362,93 @@ export class SQLitePlatformCommandGateway implements PlatformCommandGateway {
       action: 'snooze' as const,
       sourceNotificationId: command.sourceNotificationId,
     };
-    const receipt = await executeIdempotentCommand(
-      database,
-      {
-        id: envelope.idempotencyKey,
-        name: 'platform.reminder.snooze',
-        payload,
-        issuedAt: issuedAt.getTime(),
-      },
-      async (transaction) => {
-        const deliveryId = createUuid();
-        await transaction.runAsync(
-          `INSERT OR IGNORE INTO reminder_deliveries
-            (id, reminder_rule_id, occurrence_key, scheduled_at, acted_at,
-             action, notification_id)
-           SELECT ?, id, ?, ?, ?, 'snooze', ?
-           FROM reminder_rules
-           WHERE id = ? AND deleted_at IS NULL`,
-          [
-            deliveryId,
-            command.occurrenceId,
-            fireAt.getTime(),
-            issuedAt.getTime(),
+    const remindersEnabled = await remindersAreEnabled();
+    if (!remindersEnabled) {
+      const disabledReceipt = await executeIdempotentCommand(
+        database,
+        {
+          id: envelope.idempotencyKey,
+          name: 'platform.reminder.snooze',
+          payload: { ...payload, masterEnabled: false },
+          issuedAt: issuedAt.getTime(),
+        },
+        async () => ({ notificationId: null }),
+      );
+      await cancelOneShotReminderAsync(command.sourceNotificationId).catch(
+        () => undefined,
+      );
+      return dispatchStatus(disabledReceipt.replayed);
+    }
+    let scheduledNotificationId: string | null = null;
+    let receipt;
+    try {
+      receipt = await executeIdempotentCommand(
+        database,
+        {
+          id: envelope.idempotencyKey,
+          name: 'platform.reminder.snooze',
+          payload,
+          issuedAt: issuedAt.getTime(),
+        },
+        async (transaction) => {
+          // Schedule first. A native failure must not leave a committed row or
+          // receipt claiming that the snooze exists.
+          scheduledNotificationId = await scheduleOneShotReminderAsync({
             notificationId,
-            command.reminderId,
-          ],
+            reminderId: command.reminderId,
+            targetKind: command.targetKind,
+            targetId: command.targetId,
+            occurrenceId: command.occurrenceId,
+            title: definition.title,
+            body: 'Recordatorio pospuesto',
+            fireAt,
+            exactAlarm: definition.exact_alarm === 1,
+          });
+          const deliveryId = createUuid();
+          await transaction.runAsync(
+            `INSERT OR IGNORE INTO reminder_deliveries
+              (id, reminder_rule_id, occurrence_key, scheduled_at, acted_at,
+               action, notification_id)
+             SELECT ?, id, ?, ?, ?, 'snooze', ?
+             FROM reminder_rules
+             WHERE id = ? AND deleted_at IS NULL`,
+            [
+              deliveryId,
+              command.occurrenceId,
+              fireAt.getTime(),
+              issuedAt.getTime(),
+              scheduledNotificationId,
+              command.reminderId,
+            ],
+          );
+          await recordMutation(transaction, {
+            commandId: envelope.idempotencyKey,
+            deviceId,
+            entityType: 'reminder_delivery',
+            entityId: deliveryId,
+            operation: 'upsert',
+            payload: {
+              id: deliveryId,
+              ...payload,
+              notificationId: scheduledNotificationId,
+            },
+            now: issuedAt.getTime(),
+          });
+          return { notificationId: scheduledNotificationId };
+        },
+      );
+    } catch (error) {
+      if (scheduledNotificationId) {
+        await cancelOneShotReminderAsync(scheduledNotificationId).catch(
+          () => undefined,
         );
-        await recordMutation(transaction, {
-          commandId: envelope.idempotencyKey,
-          deviceId,
-          entityType: 'reminder_delivery',
-          entityId: deliveryId,
-          operation: 'upsert',
-          payload: { id: deliveryId, ...payload },
-          now: issuedAt.getTime(),
-        });
-        return { notificationId };
-      },
-    );
+      }
+      throw error;
+    }
 
     await cancelOneShotReminderAsync(command.sourceNotificationId).catch(
       () => undefined,
     );
-    await scheduleOneShotReminderAsync({
-      notificationId: receipt.value.notificationId,
-      reminderId: command.reminderId,
-      targetKind: command.targetKind,
-      targetId: command.targetId,
-      occurrenceId: command.occurrenceId,
-      title: titleRow?.title ?? 'Atlas',
-      body: 'Recordatorio pospuesto',
-      fireAt,
-    });
     return dispatchStatus(receipt.replayed);
   }
 }

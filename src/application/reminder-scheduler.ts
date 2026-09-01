@@ -20,7 +20,9 @@ import {
 } from './reminder-plan';
 
 const MANAGED_NOTIFICATION_PREFIX = 'atlas-reminder-';
+const SNOOZED_NOTIFICATION_PREFIX = 'atlas-snooze-';
 const DEFAULT_HORIZON_DAYS = 35;
+export const REMINDERS_ENABLED_STORAGE_KEY = '@atlas/reminders-enabled/v1';
 
 type DefinitionRow = Readonly<{
   reminder_id: string;
@@ -31,6 +33,7 @@ type DefinitionRow = Readonly<{
   local_time: string | null;
   offset_minutes: number;
   snooze_minutes: number;
+  exact_alarm: number;
   schedule_version_id: string;
   version_number: number;
   effective_from: string;
@@ -98,6 +101,7 @@ export type RescheduleAtlasRemindersOptions = Readonly<{
   now?: Date;
   horizonDays?: number;
   dependencies?: Partial<AtlasReminderSchedulerDependencies>;
+  enabled?: boolean;
 }>;
 
 export type RescheduleAtlasRemindersResult = Readonly<{
@@ -136,6 +140,7 @@ function mapDefinition(row: DefinitionRow): ReminderScheduleDefinition {
     localTime: row.local_time,
     offsetMinutes: row.offset_minutes,
     snoozeMinutes: row.snooze_minutes,
+    exactAlarm: row.exact_alarm === 1,
     scheduleVersionId: row.schedule_version_id,
     versionNumber: row.version_number,
     effectiveFrom: row.effective_from,
@@ -171,6 +176,7 @@ async function loadDefinitions(
        ) AS local_time,
        rr.offset_minutes,
        rr.snooze_minutes,
+       rr.exact_alarm,
        sv.id AS schedule_version_id,
        sv.version_number,
        sv.effective_from,
@@ -305,15 +311,17 @@ async function rememberDelivery(
 }
 
 /**
- * Reconciles only Atlas-owned one-shot alarms. Snoozed and unrelated
- * notifications are not touched. Database writes happen after the native
- * operation they describe, so a failed schedule is never recorded as active.
+ * Reconciles Atlas-owned one-shot alarms. Normal refreshes preserve snoozes.
+ * Disabling the local master switch cancels reminders and snoozes together.
+ * Database writes happen after the native operation they describe, so a failed
+ * schedule or cancellation is never recorded as successful.
  */
 export async function rescheduleAtlasRemindersAsync({
   database,
   now = new Date(),
   horizonDays = DEFAULT_HORIZON_DAYS,
   dependencies,
+  enabled = true,
 }: RescheduleAtlasRemindersOptions): Promise<RescheduleAtlasRemindersResult> {
   const services: AtlasReminderSchedulerDependencies = {
     ...defaultDependencies,
@@ -331,20 +339,23 @@ export async function rescheduleAtlasRemindersAsync({
           AND acted_at IS NULL`,
     ),
   ]);
-  const plan = buildAtlasReminderPlan({
-    definitions,
-    ...state,
-    now,
-    horizonDays,
-  });
+  const plan = enabled
+    ? buildAtlasReminderPlan({
+        definitions,
+        ...state,
+        now,
+        horizonDays,
+      })
+    : [];
   const desiredById = new Map(
     plan.map((entry) => [entry.notificationId, entry]),
   );
-  const actualManaged = new Set(
-    scheduledIds.filter((id) => id.startsWith(MANAGED_NOTIFICATION_PREFIX)),
-  );
+  const isManagedId = (notificationId: string) =>
+    notificationId.startsWith(MANAGED_NOTIFICATION_PREFIX) ||
+    (!enabled && notificationId.startsWith(SNOOZED_NOTIFICATION_PREFIX));
+  const actualManaged = new Set(scheduledIds.filter(isManagedId));
   const knownDeliveries = new Set(
-    deliveryRows.map((row) => row.notification_id),
+    deliveryRows.map((row) => row.notification_id).filter(isManagedId),
   );
 
   let cancelled = 0;
@@ -384,6 +395,7 @@ export async function rescheduleAtlasRemindersAsync({
       body: entry.body,
       fireAt: entry.fireAt,
       snoozeMinutes: entry.snoozeMinutes,
+      exactAlarm: entry.exactAlarm,
     });
     try {
       await rememberDelivery(
