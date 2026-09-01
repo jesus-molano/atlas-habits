@@ -1,10 +1,9 @@
 import { useRouter } from 'expo-router';
 import { CalendarDays, Map, Plus, Timer } from 'lucide-react-native';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   useWindowDimensions,
   View,
@@ -27,6 +26,7 @@ import { isScheduledOnDate, useAtlasApp } from '@/features/atlas';
 import { PageHeader } from '@/features/ui';
 
 import { HabitCard, RoutineCard, TaskCard } from './item-cards';
+import { todayDateStripKeys } from './today-date-strip';
 
 function capitalize(value: string): string {
   return value.charAt(0).toLocaleUpperCase('es') + value.slice(1);
@@ -48,30 +48,16 @@ function TodayDateStrip({
 }) {
   const theme = useTheme();
   const { fontScale } = useWindowDimensions();
-  const stripRef = useRef<ScrollView>(null);
-  const initialScrollComplete = useRef(false);
   const dateCellHeight = Math.round(
     64 + Math.max(0, Math.min(fontScale, 2) - 1) * 32,
   );
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() + index - 6);
-    return date;
-  });
+  const days = todayDateStripKeys(selectedDate).map(
+    (date) => new Date(`${date}T12:00:00`),
+  );
   return (
-    <ScrollView
+    <View
       accessibilityRole="tablist"
-      contentContainerStyle={styles.dateStrip}
-      horizontal
-      keyboardShouldPersistTaps="handled"
-      onContentSizeChange={() => {
-        if (initialScrollComplete.current) return;
-        initialScrollComplete.current = true;
-        stripRef.current?.scrollToEnd({ animated: false });
-      }}
-      ref={stripRef}
-      showsHorizontalScrollIndicator={false}
-      style={[styles.dateStripViewport, { height: dateCellHeight }]}
+      style={[styles.dateStrip, { height: dateCellHeight }]}
     >
       {days.map((date) => {
         const key = localDateKey(date);
@@ -117,7 +103,7 @@ function TodayDateStrip({
           </Pressable>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -364,8 +350,8 @@ export function TodayScreen() {
       {!isToday ? (
         <Card padding="sm" variant="tinted">
           <Text align="center" tone="secondary" variant="caption">
-            Estás corrigiendo los hábitos de esta fecha. El foco histórico se
-            consulta en Avance.
+            Estás revisando los hábitos de esta fecha. Puedes corregirlos y
+            añadir tiempo manual; el foco histórico se consulta en Avance.
           </Text>
         </Card>
       ) : null}
@@ -387,10 +373,11 @@ export function TodayScreen() {
                 onAdd={(amount) => addHabitValue(habit.id, amount)}
                 onOpenActions={() => setActionHabitId(habit.id)}
                 onOpenTimer={
-                  isToday && habit.metric === 'duration'
+                  habit.metric === 'duration'
                     ? () => openTimerSheet(habit.id)
                     : undefined
                 }
+                durationActionMode={isToday ? 'timer' : 'manual'}
                 onToggle={() => toggleHabit(habit.id)}
               />
             ))
@@ -498,18 +485,15 @@ export function TodayScreen() {
 
 const styles = StyleSheet.create({
   content: { gap: 14, paddingBottom: 148, paddingTop: 8 },
-  dateStrip: { gap: 8, paddingRight: 16 },
-  dateStripViewport: { flexGrow: 0, flexShrink: 0 },
+  dateStrip: { flexDirection: 'row', gap: 6 },
   dateCell: {
     alignItems: 'center',
     borderRadius: 14,
     borderWidth: 1,
-    flexShrink: 0,
+    flex: 1,
     gap: 1,
     justifyContent: 'center',
-    maxWidth: 56,
-    minWidth: 56,
-    width: 56,
+    minWidth: 0,
   },
   loading: {
     alignItems: 'center',

@@ -19,6 +19,7 @@ import {
   type ProviderSnapshotRead,
 } from './atlas-provider-runtime';
 import { createEmptySnapshot } from './empty-snapshot';
+import { updateOptimisticHistoryForDate } from './optimistic-history';
 import {
   createDefaultSchedule,
   expectedCompletions,
@@ -227,40 +228,6 @@ export type AtlasAppContextValue = {
 
 const AtlasAppContext = createContext<AtlasAppContextValue | null>(null);
 
-function updateHistoryForDate(
-  snapshot: AtlasSnapshot,
-  date: string,
-): AtlasSnapshot {
-  const datedHabits = habitsForDate(snapshot, date);
-  const activeHabits = datedHabits.filter(
-    (habit) => !habit.skipped && !habit.paused,
-  );
-  const currentDay = date === todayKey();
-  const scheduledTasks = snapshot.tasks.filter((item) =>
-    isScheduledOnDate(item.schedule, date),
-  );
-  const scheduledRoutines = snapshot.routines.filter((item) =>
-    isScheduledOnDate(item.schedule, date),
-  );
-  const total =
-    activeHabits.length +
-    (currentDay ? scheduledTasks.length + scheduledRoutines.length : 0);
-  const completed =
-    activeHabits.filter(habitDone).length +
-    (currentDay
-      ? scheduledTasks.filter((item) => item.completed).length +
-        scheduledRoutines.filter((item) => item.completed).length
-      : 0);
-  const ratio = total === 0 ? 0 : completed / total;
-  const existing = snapshot.history.findIndex((day) => day.date === date);
-  const history = [...snapshot.history];
-  const focusSeconds =
-    existing >= 0 ? (history[existing]?.focusSeconds ?? 0) : 0;
-  if (existing >= 0) history[existing] = { date, ratio, focusSeconds };
-  else history.push({ date, ratio, focusSeconds });
-  return { ...snapshot, history };
-}
-
 function adapterUnavailable(capability: string): AdapterActionResult {
   return {
     ok: false,
@@ -352,7 +319,11 @@ export function AtlasAppProvider({
       snapshotApplyGuardRef.current.markOptimisticMutation();
       optimisticMutationGenerationRef.current += 1;
       setSnapshot((current) => {
-        const next = updateHistoryForDate(updater(current), historyDate);
+        const next = updateOptimisticHistoryForDate(
+          updater(current),
+          historyDate,
+          todayKey(),
+        );
         if (hydrated) void adapterRef.current.saveSnapshot(next, historyDate);
         return next;
       });

@@ -652,12 +652,12 @@ function routineState(
   };
 }
 
-function historyRatio(
+function historyProgress(
   day: DashboardSnapshot,
   today: LocalDate,
   now: Date,
   historyDays: readonly DashboardSnapshot[],
-): number {
+): { eligibleActions: number; ratio: number } {
   let completed = 0;
   let total = 0;
   for (const item of day.items) {
@@ -678,7 +678,10 @@ function historyRatio(
       completed += 1;
     }
   }
-  return total === 0 ? 0 : completed / total;
+  return {
+    eligibleActions: total,
+    ratio: total === 0 ? 0 : completed / total,
+  };
 }
 
 function focusSeconds(day: DashboardSnapshot): number {
@@ -965,11 +968,15 @@ export function mapDashboardToAtlasSnapshot(
     tasks,
     routines,
     dashboardOrder: normalizeDashboardOrder(relations.dashboardOrder),
-    history: historyDays.map((day) => ({
-      date: day.localDate,
-      ratio: historyRatio(day, today, input.now, historyDays),
-      focusSeconds: focusSeconds(day),
-    })),
+    history: historyDays.map((day) => {
+      const progress = historyProgress(day, today, input.now, historyDays);
+      return {
+        date: day.localDate,
+        ratio: progress.ratio,
+        focusSeconds: focusSeconds(day),
+        eligibleActions: progress.eligibleActions,
+      };
+    }),
     habitHistory,
     sync: relations.sync ?? { status: 'local-only' },
   };

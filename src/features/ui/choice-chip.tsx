@@ -7,6 +7,7 @@ import { useTheme } from '@/design';
 type ChoiceChipProps = {
   label: string;
   selected?: boolean;
+  disabled?: boolean;
   onPress: () => void;
   icon?: LucideIcon;
   style?: StyleProp<ViewStyle>;
@@ -15,6 +16,7 @@ type ChoiceChipProps = {
 export function ChoiceChip({
   label,
   selected = false,
+  disabled = false,
   onPress,
   icon: Icon,
   style,
@@ -23,8 +25,9 @@ export function ChoiceChip({
   return (
     <Pressable
       accessibilityRole="radio"
-      accessibilityState={{ checked: selected }}
+      accessibilityState={{ checked: selected, disabled }}
       android_ripple={{ color: theme.colors.primaryMuted }}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.base,
@@ -33,7 +36,7 @@ export function ChoiceChip({
             ? theme.colors.primaryMuted
             : theme.colors.surface,
           borderColor: selected ? theme.colors.primary : theme.colors.border,
-          opacity: pressed ? 0.78 : 1,
+          opacity: disabled ? 0.5 : pressed ? 0.78 : 1,
         },
         style,
       ]}

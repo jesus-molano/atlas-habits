@@ -102,6 +102,94 @@ function quotaMeasurement(
   };
 }
 
+function dailyHabitDay(
+  localDate: string,
+  options: {
+    completed?: boolean;
+    paused?: boolean;
+    weekdays?: number[];
+  } = {},
+): DashboardSnapshot {
+  const versionId = `daily-version:${localDate}`;
+  return {
+    localDate,
+    items: [
+      {
+        id: 'habit-daily',
+        workspaceId: 'local',
+        type: 'habit',
+        title: 'Leer',
+        notes: null,
+        color: null,
+        icon: null,
+        categoryId: null,
+        categoryName: null,
+        categoryColor: null,
+        tagIds: [],
+        sortOrder: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        archivedAt: null,
+        deletedAt: null,
+        isPaused: options.paused ?? false,
+        subtypeJson: JSON.stringify({
+          measurementType: 'boolean',
+          unit: 'vez',
+          defaultValue: 1,
+        }),
+      },
+    ],
+    scheduleVersions: [
+      {
+        id: versionId,
+        scheduleId: 'daily-schedule',
+        itemId: 'habit-daily',
+        timezone: 'Atlantic/Canary',
+        versionNumber: 1,
+        effectiveFrom: '2026-08-31',
+        effectiveUntil: null,
+        ruleType: options.weekdays ? 'weekdays' : 'daily',
+        rule: options.weekdays ? { days: options.weekdays } : {},
+        graceMinutes: 0,
+      },
+    ],
+    scheduleSlots: [],
+    scheduleGoals: [
+      {
+        id: `daily-goal:${localDate}`,
+        scheduleVersionId: versionId,
+        slotId: null,
+        measurementType: 'boolean',
+        aggregation: 'sum',
+        comparison: 'at_least',
+        targetValue: 1,
+        unit: 'vez',
+      },
+    ],
+    measurements: options.completed
+      ? [
+          {
+            id: `daily-measurement:${localDate}`,
+            itemId: 'habit-daily',
+            occurrenceKey: `daily:${localDate}`,
+            sessionId: null,
+            scheduleVersionId: versionId,
+            slotId: null,
+            value: 1,
+            operation: 'set',
+            unit: 'vez',
+            occurredAt: timestamp(`${localDate}T09:00:00`),
+            localDate,
+            note: null,
+          },
+        ]
+      : [],
+    overrides: [],
+    taskInstances: [],
+    routineRuns: [],
+  };
+}
+
 describe('task projection', () => {
   it('parses the task editor date separator', () => {
     expect(timestampFromUiValue('2026-09-02 · 09:30', '2026-09-02')).toBe(
@@ -258,5 +346,54 @@ describe('period quota projection', () => {
       now: new Date('2026-09-02T12:00:00'),
     }).habits[0];
     expect(completed).toMatchObject({ value: 15, target: 5, completed: true });
+  });
+});
+
+describe('history eligibility projection', () => {
+  it('distinguishes failed, neutral and completed history days', () => {
+    const failed = dailyHabitDay('2026-08-31');
+    const paused = dailyHabitDay('2026-09-01', { paused: true });
+    const completed = dailyHabitDay('2026-09-02', { completed: true });
+
+    const snapshot = mapDashboardToAtlasSnapshot({
+      day: completed,
+      historyDays: [failed, paused, completed],
+      now: new Date('2026-09-02T12:00:00'),
+    });
+
+    expect(snapshot.history).toEqual([
+      {
+        date: '2026-08-31',
+        eligibleActions: 1,
+        focusSeconds: 0,
+        ratio: 0,
+      },
+      {
+        date: '2026-09-01',
+        eligibleActions: 0,
+        focusSeconds: 0,
+        ratio: 0,
+      },
+      {
+        date: '2026-09-02',
+        eligibleActions: 1,
+        focusSeconds: 0,
+        ratio: 1,
+      },
+    ]);
+  });
+
+  it('marks a day outside the habit schedule as neutral', () => {
+    const tuesday = dailyHabitDay('2026-09-01', { weekdays: [1] });
+
+    const snapshot = mapDashboardToAtlasSnapshot({
+      day: tuesday,
+      now: new Date('2026-09-01T12:00:00'),
+    });
+
+    expect(snapshot.history[0]).toMatchObject({
+      eligibleActions: 0,
+      ratio: 0,
+    });
   });
 });

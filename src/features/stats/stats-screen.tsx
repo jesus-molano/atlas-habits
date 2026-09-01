@@ -6,6 +6,8 @@ import { useTheme } from '@/design';
 import { useAtlasApp, type HistoryDay } from '@/features/atlas';
 import { PageHeader } from '@/features/ui';
 
+import { globalStreaks } from './stats-metrics';
+
 function dateKey(date: Date): string {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, '0');
@@ -41,23 +43,6 @@ function calendarHeatmapDays(history: readonly HistoryDay[]): HistoryDay[] {
   });
 }
 
-function streaks(ratios: number[]): { current: number; best: number } {
-  let best = 0;
-  let running = 0;
-  ratios.forEach((ratio) => {
-    if (ratio >= 0.999) {
-      running += 1;
-      best = Math.max(best, running);
-    } else running = 0;
-  });
-  let current = 0;
-  for (let index = ratios.length - 1; index >= 0; index -= 1) {
-    if ((ratios[index] ?? 0) < 0.999) break;
-    current += 1;
-  }
-  return { current, best };
-}
-
 function weekday(date: string): string {
   return new Date(`${date}T12:00:00`).toLocaleDateString('es-ES', {
     weekday: 'narrow',
@@ -82,7 +67,7 @@ export function StatsScreen() {
   );
   const week = recent.slice(-7);
   const today = dateKey(new Date());
-  const stats = streaks(recent.map((day) => day.ratio));
+  const stats = globalStreaks(recent);
   const weeklyRatio =
     week.reduce((sum, day) => sum + day.ratio, 0) / week.length;
   const weeklyFocus = week.reduce((sum, day) => sum + day.focusSeconds, 0);

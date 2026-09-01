@@ -116,6 +116,8 @@ export type HistoryDay = {
   date: string;
   ratio: number;
   focusSeconds: number;
+  /** Actions that contributed to ratio. Zero means the day is neutral. */
+  eligibleActions?: number;
 };
 
 export type ActiveTimerState = Readonly<{

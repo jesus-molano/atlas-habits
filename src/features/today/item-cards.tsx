@@ -140,6 +140,7 @@ type HabitCardProps = {
   onAdd: (amount: number) => void;
   onOpenTimer?: () => void;
   onOpenActions?: () => void;
+  durationActionMode?: 'timer' | 'manual';
 };
 
 export function HabitCard({
@@ -148,6 +149,7 @@ export function HabitCard({
   onAdd,
   onOpenTimer,
   onOpenActions,
+  durationActionMode = 'timer',
 }: HabitCardProps) {
   const theme = useTheme();
   const liveValue = habit.value;
@@ -294,7 +296,11 @@ export function HabitCard({
               </>
             ) : onOpenTimer ? (
               <Pressable
-                accessibilityLabel={`Abrir cronómetro y registro manual para ${habit.title}`}
+                accessibilityLabel={
+                  durationActionMode === 'manual'
+                    ? `Añadir tiempo manual para ${habit.title}`
+                    : `Abrir cronómetro y registro manual para ${habit.title}`
+                }
                 accessibilityRole="button"
                 onPress={onOpenTimer}
                 style={({ pressed }) => [
@@ -308,7 +314,9 @@ export function HabitCard({
               >
                 <Timer color={theme.colors.primary} size={18} />
                 <Text color="primary" variant="label">
-                  Cronómetro o manual
+                  {durationActionMode === 'manual'
+                    ? 'Añadir tiempo manual'
+                    : 'Cronómetro o manual'}
                 </Text>
               </Pressable>
             ) : null}

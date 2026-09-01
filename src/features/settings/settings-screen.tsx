@@ -57,7 +57,7 @@ export function SettingsScreen() {
   >(null);
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
   const [awaitingSystemSettings, setAwaitingSystemSettings] = useState<
-    'notifications' | 'alarms' | null
+    'notifications' | 'notification-master' | 'alarms' | null
   >(null);
   const version = Application.nativeApplicationVersion ?? '0.1.1';
   const capability = snapshot.reminderCapability ?? {
@@ -84,14 +84,21 @@ export function SettingsScreen() {
       setPending(id);
       try {
         const result = await action();
-        if (
-          result.code === 'settings-opened' &&
-          (id === 'notifications' || id === 'alarms')
-        ) {
-          setAwaitingSystemSettings(id);
+        const settingsTarget:
+          'notifications' | 'notification-master' | 'alarms' | null =
+          id === 'alarms'
+            ? 'alarms'
+            : id === 'reminder-master'
+              ? 'notification-master'
+              : id === 'notifications'
+                ? 'notifications'
+                : null;
+        if (result.code === 'settings-opened' && settingsTarget !== null) {
+          setAwaitingSystemSettings(settingsTarget);
           setFeedback(null);
           return result;
         }
+        if (settingsTarget !== null) setAwaitingSystemSettings(null);
         setFeedback({
           ...result,
           title: result.ok ? copy.successTitle : copy.failureTitle,
@@ -140,7 +147,8 @@ export function SettingsScreen() {
         : 'Requiere ajustes';
 
   const systemSettingsReady =
-    (awaitingSystemSettings === 'notifications' &&
+    ((awaitingSystemSettings === 'notifications' ||
+      awaitingSystemSettings === 'notification-master') &&
       (capability.notifications === 'granted' ||
         capability.notifications === 'not-applicable')) ||
     (awaitingSystemSettings === 'alarms' &&
@@ -343,17 +351,24 @@ export function SettingsScreen() {
           {awaitingSystemSettings ? (
             <InlineFeedback
               message={
-                systemSettingsReady
-                  ? 'Atlas ha comprobado el permiso al volver desde Android.'
-                  : awaitingSystemSettings === 'notifications'
-                    ? 'Activa Notificaciones en Android y vuelve a Atlas. El estado se comprobará de nuevo.'
-                    : 'Activa Alarmas y recordatorios para Atlas y vuelve. El estado se comprobará de nuevo.'
+                systemSettingsReady &&
+                awaitingSystemSettings === 'notification-master'
+                  ? 'Android ya permite las notificaciones. Los recordatorios siguen pausados; pulsa «Activar recordatorios en este dispositivo» para programarlos.'
+                  : systemSettingsReady
+                    ? 'Atlas ha comprobado el permiso al volver desde Android.'
+                    : awaitingSystemSettings === 'notifications' ||
+                        awaitingSystemSettings === 'notification-master'
+                      ? 'Activa Notificaciones en Android y vuelve a Atlas. El estado se comprobará de nuevo.'
+                      : 'Activa Alarmas y recordatorios para Atlas y vuelve. El estado se comprobará de nuevo.'
               }
               onClose={() => setAwaitingSystemSettings(null)}
               title={
-                systemSettingsReady
-                  ? 'Permiso activado'
-                  : 'Completa el permiso en Android'
+                systemSettingsReady &&
+                awaitingSystemSettings === 'notification-master'
+                  ? 'Permiso listo; falta activar'
+                  : systemSettingsReady
+                    ? 'Permiso activado'
+                    : 'Completa el permiso en Android'
               }
               tone={systemSettingsReady ? 'success' : 'neutral'}
             />
