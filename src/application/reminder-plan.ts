@@ -26,6 +26,7 @@ export type ReminderScheduleDefinition = Readonly<{
   localTime: string | null;
   offsetMinutes: number;
   snoozeMinutes: number;
+  /** Legacy persisted preference; all schedules now use Expo flexible timing. */
   exactAlarm?: boolean;
   scheduleVersionId: string;
   versionNumber: number;
@@ -85,7 +86,6 @@ export type AtlasReminderPlanEntry = Readonly<{
   body: string;
   fireAt: Date;
   snoozeMinutes: number;
-  exactAlarm: boolean;
 }>;
 
 export type BuildAtlasReminderPlanInput = Readonly<{
@@ -492,10 +492,12 @@ export function buildAtlasReminderPlan(
         targetId: definition.itemId,
         occurrenceId: occurrenceId(definition, date),
         title: definition.title,
-        body: 'Toca completar o posponer',
+        body:
+          definition.itemType === 'routine'
+            ? 'Toca para abrir Atlas o posponer'
+            : 'Toca completar o posponer',
         fireAt,
         snoozeMinutes: Math.max(1, Math.round(definition.snoozeMinutes)),
-        exactAlarm: definition.exactAlarm === true,
       });
     }
   }

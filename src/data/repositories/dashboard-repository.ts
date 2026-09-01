@@ -130,6 +130,7 @@ export class DashboardRepository {
     workspaceId = LOCAL_WORKSPACE_ID,
   ): Promise<DashboardSnapshot> {
     assertLocalDate(localDate);
+    const localDayEnd = new Date(`${localDate}T23:59:59.999`).getTime();
 
     const [
       itemRows,
@@ -268,7 +269,9 @@ export class DashboardRepository {
 
     return {
       localDate,
-      items: itemRows.map(mapItem),
+      items: itemRows
+        .filter((row) => row.created_at <= localDayEnd)
+        .map(mapItem),
       scheduleVersions: scheduleRows.map(mapScheduleVersion),
       scheduleSlots: slotRows.map(mapScheduleSlot),
       scheduleGoals: goalRows.map(mapScheduleGoal),

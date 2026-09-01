@@ -1,15 +1,26 @@
 import {
   AlarmClock,
+  Brain,
+  BriefcaseBusiness,
   ChevronRight,
+  Dumbbell,
   Flag,
   Flame,
   Folder,
+  GraduationCap,
+  HeartPulse,
+  House,
+  MoonStar,
   MoreHorizontal,
   Minus,
   Play,
   Plus,
+  Shapes,
   Timer,
   Tag,
+  UsersRound,
+  WalletCards,
+  type LucideIcon,
 } from 'lucide-react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -21,7 +32,24 @@ import {
   type RoutineItem,
   type TaskItem,
 } from '@/features/atlas';
+import {
+  findAtlasItemType,
+  type AtlasItemTypeIcon,
+} from '@/features/atlas/item-type-catalog';
 import { CheckControl } from '@/features/ui';
+
+const itemTypeIcons: Readonly<Record<AtlasItemTypeIcon, LucideIcon>> = {
+  brain: Brain,
+  briefcase: BriefcaseBusiness,
+  dumbbell: Dumbbell,
+  'graduation-cap': GraduationCap,
+  'heart-pulse': HeartPulse,
+  house: House,
+  'moon-star': MoonStar,
+  shapes: Shapes,
+  users: UsersRound,
+  wallet: WalletCards,
+};
 
 function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
@@ -52,6 +80,11 @@ function ItemMetadata({
   const theme = useTheme();
   const cleanTags = tags.filter((tag) => tag.trim().length > 0);
   const hasLabels = Boolean(category) || cleanTags.length > 0;
+  const itemType = findAtlasItemType(category);
+  const CategoryIcon = itemType ? itemTypeIcons[itemType.icon] : Folder;
+  const categoryColor = itemType
+    ? theme.colors[itemType.color]
+    : theme.colors.textSecondary;
 
   if (!notes && !hasLabels && !deadlineAt) return null;
 
@@ -66,8 +99,10 @@ function ItemMetadata({
         <View
           accessible
           accessibilityLabel={[
-            category ? `Categoría: ${category}` : null,
-            cleanTags.length > 0 ? `Etiquetas: ${cleanTags.join(', ')}` : null,
+            category ? `Área: ${category}` : null,
+            cleanTags.length > 0
+              ? `Etiquetas anteriores: ${cleanTags.join(', ')}`
+              : null,
           ]
             .filter(Boolean)
             .join('. ')}
@@ -77,11 +112,18 @@ function ItemMetadata({
             <View
               style={[
                 styles.metadataPill,
-                { backgroundColor: theme.colors.surfaceMuted },
+                {
+                  backgroundColor: `${categoryColor}20`,
+                  borderColor: `${categoryColor}70`,
+                },
               ]}
             >
-              <Folder color={theme.colors.textSecondary} size={13} />
-              <Text numberOfLines={1} tone="secondary" variant="caption">
+              <CategoryIcon color={categoryColor} size={13} />
+              <Text
+                numberOfLines={1}
+                style={{ color: categoryColor }}
+                variant="caption"
+              >
                 {category}
               </Text>
             </View>
@@ -91,7 +133,10 @@ function ItemMetadata({
               key={tag}
               style={[
                 styles.metadataPill,
-                { backgroundColor: theme.colors.surfaceMuted },
+                {
+                  backgroundColor: theme.colors.surfaceMuted,
+                  borderColor: theme.colors.border,
+                },
               ]}
             >
               <Tag color={theme.colors.textMuted} size={12} />
@@ -126,8 +171,8 @@ function metadataAccessibilityLabel({
 }: ItemMetadataProps): string {
   return [
     notes ? `Notas: ${notes}` : null,
-    category ? `Categoría: ${category}` : null,
-    tags.length > 0 ? `Etiquetas: ${tags.join(', ')}` : null,
+    category ? `Área: ${category}` : null,
+    tags.length > 0 ? `Etiquetas anteriores: ${tags.join(', ')}` : null,
     deadlineAt ? `Fecha límite: ${deadlineAt}` : null,
   ]
     .filter(Boolean)
@@ -140,7 +185,7 @@ type HabitCardProps = {
   onAdd: (amount: number) => void;
   onOpenTimer?: () => void;
   onOpenActions?: () => void;
-  durationActionMode?: 'timer' | 'manual';
+  durationActionMode?: 'timer' | 'manual' | 'active';
 };
 
 export function HabitCard({
@@ -299,7 +344,9 @@ export function HabitCard({
                 accessibilityLabel={
                   durationActionMode === 'manual'
                     ? `Añadir tiempo manual para ${habit.title}`
-                    : `Abrir cronómetro y registro manual para ${habit.title}`
+                    : durationActionMode === 'active'
+                      ? `Ver cronómetro activo para ${habit.title}`
+                      : `Abrir cronómetro y registro manual para ${habit.title}`
                 }
                 accessibilityRole="button"
                 onPress={onOpenTimer}
@@ -316,7 +363,9 @@ export function HabitCard({
                 <Text color="primary" variant="label">
                   {durationActionMode === 'manual'
                     ? 'Añadir tiempo manual'
-                    : 'Cronómetro o manual'}
+                    : durationActionMode === 'active'
+                      ? 'Ver cronómetro'
+                      : 'Registrar tiempo'}
                 </Text>
               </Pressable>
             ) : null}
@@ -333,6 +382,7 @@ type TaskCardProps = {
   onToggleSubtask: (subtaskId: string) => void;
   onOpenActions?: () => void;
   onOpenTimer?: () => void;
+  timerActionMode?: 'start' | 'active';
 };
 
 export function TaskCard({
@@ -341,6 +391,7 @@ export function TaskCard({
   onToggleSubtask,
   onOpenActions,
   onOpenTimer,
+  timerActionMode = 'start',
 }: TaskCardProps) {
   const theme = useTheme();
   const priority = {
@@ -350,6 +401,10 @@ export function TaskCard({
   }[task.priority];
   const dueAt = task.occurrenceDueAt ?? task.dueAt;
   const deadlineAt = task.occurrenceDeadlineAt ?? task.deadlineAt;
+  const requiredSubtasks = task.subtasks.filter((subtask) => subtask.required);
+  const completedRequiredSubtasks = requiredSubtasks.filter(
+    (subtask) => subtask.completed,
+  ).length;
 
   return (
     <Card
@@ -410,8 +465,16 @@ export function TaskCard({
       />
       {onOpenTimer && !task.completed ? (
         <Pressable
-          accessibilityHint="El tiempo se registra sin completar la tarea"
-          accessibilityLabel={`Cronometrar ${task.title}`}
+          accessibilityHint={
+            timerActionMode === 'active'
+              ? 'Abre los controles de la sesión en curso'
+              : 'El tiempo se registra sin completar la tarea'
+          }
+          accessibilityLabel={
+            timerActionMode === 'active'
+              ? `Ver cronómetro activo para ${task.title}`
+              : `Cronometrar ${task.title}`
+          }
           accessibilityRole="button"
           onPress={onOpenTimer}
           style={({ pressed }) => [
@@ -425,7 +488,9 @@ export function TaskCard({
         >
           <Timer color={theme.colors.primary} size={17} />
           <Text color="primary" variant="label">
-            Registrar tiempo
+            {timerActionMode === 'active'
+              ? 'Ver cronómetro'
+              : 'Registrar tiempo'}
           </Text>
         </Pressable>
       ) : null}
@@ -433,9 +498,14 @@ export function TaskCard({
         <View
           style={[styles.subtasks, { borderTopColor: theme.colors.border }]}
         >
+          <Text tone="muted" variant="caption">
+            {requiredSubtasks.length > 0
+              ? `${completedRequiredSubtasks} de ${requiredSubtasks.length} necesarias para completar la tarea`
+              : 'Todas las subtareas se pueden omitir'}
+          </Text>
           {task.subtasks.map((subtask) => (
             <Pressable
-              accessibilityLabel={`${subtask.title}${subtask.required ? ', obligatorio' : ', opcional'}`}
+              accessibilityLabel={`${subtask.title}${subtask.required ? ', necesaria para completar la tarea' : ', se puede omitir'}`}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: subtask.completed }}
               key={subtask.id}
@@ -467,7 +537,7 @@ export function TaskCard({
               </Text>
               {!subtask.required ? (
                 <Text tone="muted" variant="caption">
-                  opcional
+                  se puede omitir
                 </Text>
               ) : null}
             </Pressable>
@@ -617,6 +687,7 @@ const styles = StyleSheet.create({
   metadataPill: {
     alignItems: 'center',
     borderRadius: 999,
+    borderWidth: 1,
     flexDirection: 'row',
     gap: 5,
     maxWidth: '100%',

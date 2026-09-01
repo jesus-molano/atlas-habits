@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -31,17 +31,27 @@ function formatClock(seconds: number): string {
 }
 
 export function RoutineRunScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, date } = useLocalSearchParams<{ id: string; date?: string }>();
   const router = useRouter();
   const theme = useTheme();
   const {
     snapshot,
+    selectedDate,
+    selectedRoutines,
+    historicalDayStatus,
+    setSelectedDate,
     startRoutine,
     setRoutineStep,
     finishRoutine,
     resetRoutine,
   } = useAtlasApp();
-  const routine = snapshot.routines.find((item) => item.id === id);
+  const routineDate =
+    typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(date)
+      ? date
+      : undefined;
+  const routine = (routineDate ? selectedRoutines : snapshot.routines).find(
+    (item) => item.id === id,
+  );
   const initialIndex = useMemo(() => {
     if (!routine) return 0;
     const firstIncomplete = routine.steps.findIndex((step) => !step.completed);
@@ -56,10 +66,18 @@ export function RoutineRunScreen() {
   const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
 
   useEffect(() => {
-    if (routine) startRoutine(routine.id);
+    if (routineDate && selectedDate !== routineDate) {
+      setSelectedDate(routineDate);
+    }
+  }, [routineDate, selectedDate, setSelectedDate]);
+
+  useEffect(() => {
+    if (routine && !routine.running && !routine.completed) {
+      startRoutine(routine.id, routineDate);
+    }
     // This intentionally runs once for the opened routine.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routine?.id]);
+  }, [routine?.id, routineDate]);
 
   useEffect(() => {
     if (!timerRunning || remaining <= 0) return;
@@ -68,6 +86,22 @@ export function RoutineRunScreen() {
     }, 1_000);
     return () => clearInterval(interval);
   }, [remaining, timerRunning]);
+
+  if (
+    routineDate &&
+    (selectedDate !== routineDate || historicalDayStatus === 'loading')
+  ) {
+    return (
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
+      >
+        <View style={styles.loading}>
+          <ActivityIndicator color={theme.colors.primary} size="large" />
+          <Text tone="secondary">Cargando el registro de la rutina…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!routine || !step) {
     return (
@@ -97,9 +131,9 @@ export function RoutineRunScreen() {
   };
 
   const next = (complete: boolean) => {
-    if (complete) setRoutineStep(routine.id, step.id, true);
+    if (complete) setRoutineStep(routine.id, step.id, true, routineDate);
     if (isLast) {
-      finishRoutine(routine.id);
+      finishRoutine(routine.id, routineDate);
       router.replace('/(tabs)');
       return;
     }
@@ -170,7 +204,9 @@ export function RoutineRunScreen() {
       <View style={styles.stage}>
         <View style={styles.stepMeta}>
           <Text tone="accent" variant="eyebrow">
-            {step.required ? 'PASO OBLIGATORIO' : 'PASO OPCIONAL'}
+            {step.required
+              ? 'NECESARIO PARA TERMINAR'
+              : 'PUEDES OMITIR ESTE PASO'}
           </Text>
           {step.completed ? (
             <View
@@ -285,7 +321,7 @@ export function RoutineRunScreen() {
             label: 'Reiniciar rutina',
             variant: 'danger',
             onPress: () => {
-              resetRoutine(routine.id);
+              resetRoutine(routine.id, routineDate);
               navigateToStep(0);
               setResetConfirmationOpen(false);
             },
@@ -320,6 +356,13 @@ function CheckCircleGraphic() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, overflow: 'hidden' },
+  loading: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 14,
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
   orbits: {
     bottom: 0,
     left: 0,

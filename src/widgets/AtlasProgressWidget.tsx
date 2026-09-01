@@ -1,5 +1,8 @@
+'use no memo';
+
 import { FlexWidget, TextWidget } from 'react-native-android-widget';
 
+import type { AtlasWidgetLayout } from './layout';
 import type { AtlasWidgetSnapshot } from './model';
 import type { AtlasWidgetPalette } from './theme';
 import { widgetFonts } from './theme';
@@ -7,15 +10,56 @@ import { widgetFonts } from './theme';
 export interface AtlasProgressWidgetProps {
   readonly snapshot: AtlasWidgetSnapshot;
   readonly palette: AtlasWidgetPalette;
+  readonly layout: AtlasWidgetLayout;
 }
 
 export function AtlasProgressWidget({
   snapshot,
   palette,
+  layout,
 }: AtlasProgressWidgetProps) {
   const { completed, total, streakDays } = snapshot.progress;
   const percentage = total === 0 ? 0 : Math.round((completed / total) * 100);
   const remaining = Math.max(total - completed, 0);
+
+  if (layout.ultraCompact) {
+    return (
+      <FlexWidget
+        clickAction="OPEN_APP"
+        accessibilityLabel={`${completed} de ${total} completados hoy`}
+        style={{
+          width: 'match_parent',
+          height: 'match_parent',
+          padding: layout.padding,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          backgroundColor: palette.background,
+          borderColor: palette.border,
+          borderWidth: 1,
+          borderRadius: 18,
+        }}
+      >
+        <TextWidget
+          text="HOY"
+          style={{
+            color: palette.muted,
+            fontFamily: widgetFonts.bold,
+            fontSize: layout.titleFontSize,
+            letterSpacing: 1.1,
+          }}
+        />
+        <TextWidget
+          text={`${completed}/${total} · ${percentage}%`}
+          style={{
+            color: palette.text,
+            fontFamily: widgetFonts.bold,
+            fontSize: 15,
+          }}
+        />
+      </FlexWidget>
+    );
+  }
 
   return (
     <FlexWidget
@@ -24,7 +68,7 @@ export function AtlasProgressWidget({
       style={{
         width: 'match_parent',
         height: 'match_parent',
-        padding: 16,
+        padding: layout.padding,
         flexDirection: 'column',
         justifyContent: 'space-between',
         backgroundColor: palette.background,
@@ -46,18 +90,22 @@ export function AtlasProgressWidget({
           style={{
             color: palette.muted,
             fontFamily: widgetFonts.bold,
-            fontSize: 11,
+            fontSize: layout.titleFontSize,
             letterSpacing: 1.2,
           }}
         />
-        <TextWidget
-          text={streakDays > 0 ? `Racha · ${streakDays} d` : 'Empieza tu racha'}
-          style={{
-            color: palette.muted,
-            fontFamily: widgetFonts.medium,
-            fontSize: 12,
-          }}
-        />
+        {layout.showStreak ? (
+          <TextWidget
+            text={
+              streakDays > 0 ? `Racha · ${streakDays} d` : 'Empieza tu racha'
+            }
+            style={{
+              color: palette.muted,
+              fontFamily: widgetFonts.medium,
+              fontSize: layout.compact ? 11 : 12,
+            }}
+          />
+        ) : null}
       </FlexWidget>
 
       <FlexWidget
@@ -73,7 +121,7 @@ export function AtlasProgressWidget({
           style={{
             color: palette.text,
             fontFamily: widgetFonts.bold,
-            fontSize: 18,
+            fontSize: layout.compact ? 16 : 18,
           }}
         />
         <TextWidget
@@ -81,7 +129,7 @@ export function AtlasProgressWidget({
           style={{
             color: palette.accent,
             fontFamily: widgetFonts.bold,
-            fontSize: 22,
+            fontSize: layout.compact ? 20 : 22,
           }}
         />
       </FlexWidget>

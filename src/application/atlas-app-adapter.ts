@@ -13,6 +13,8 @@ import { createEmptySnapshot } from '../features/atlas/empty-snapshot';
 import type {
   AdapterActionResult,
   AtlasAppAdapter,
+  AtlasDayMutation,
+  AtlasDayView,
   AtlasSnapshot,
   ReminderCapability,
   SyncState,
@@ -32,6 +34,7 @@ import {
 import { refreshAtlasWidgetsAsync } from '../widgets';
 
 import { localDateFromDate } from './date-time';
+import { changesForAtlasDayMutation } from './day-mutation';
 import { getAtlasDeviceId } from './device-identity';
 import { withoutLegacyStarterItems } from './legacy-starter-cleanup';
 import { OptionalAtlasSync } from './optional-sync';
@@ -46,7 +49,10 @@ import {
 } from './runtime-events';
 import { SerializedAsyncQueue } from './serial-queue';
 import { diffAtlasSnapshots } from './snapshot-diff';
-import { loadAtlasSnapshotFromSQLite } from './snapshot-loader';
+import {
+  loadAtlasDayViewFromSQLite,
+  loadAtlasSnapshotFromSQLite,
+} from './snapshot-loader';
 import { syncIssueFor } from './sync-error-copy';
 import { atlasWidgetDataSource } from './widget-data-source';
 
@@ -253,6 +259,51 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
       const runtime = await this.runtime();
       this.canonicalSnapshot = await this.readCanonical(runtime);
       return this.canonicalSnapshot;
+    });
+  }
+
+  async loadDay(localDate: string): Promise<AtlasDayView> {
+    return this.writeQueue.enqueue(async () => {
+      const runtime = await this.runtime();
+      return loadAtlasDayViewFromSQLite({
+        database: runtime.database,
+        gateway: runtime.gateway,
+        localDate,
+        syncState: this.syncState,
+      });
+    });
+  }
+
+  async applyDayMutation(
+    localDate: string,
+    mutation: AtlasDayMutation,
+  ): Promise<AtlasDayView> {
+    return this.writeQueue.enqueue(async () => {
+      const runtime = await this.runtime();
+      const current = await loadAtlasDayViewFromSQLite({
+        database: runtime.database,
+        gateway: runtime.gateway,
+        localDate,
+        syncState: this.syncState,
+      });
+      const changes = changesForAtlasDayMutation(current, mutation);
+      if (changes.length > 0) {
+        await runtime.writer.applyChanges(
+          changes,
+          this.canonicalSnapshot ?? createEmptySnapshot(this.syncState),
+          localDate as `${number}-${number}-${number}`,
+        );
+      }
+      const next = await loadAtlasDayViewFromSQLite({
+        database: runtime.database,
+        gateway: runtime.gateway,
+        localDate,
+        syncState: this.syncState,
+      });
+      this.canonicalSnapshot = await this.readCanonical(runtime);
+      this.queueLocalSync(runtime);
+      emitAtlasSnapshotInvalidation('local-save');
+      return next;
     });
   }
 

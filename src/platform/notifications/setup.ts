@@ -5,6 +5,7 @@ import {
   NOTIFICATION_ACTIONS,
   REMINDER_CATEGORY,
   REMINDER_CHANNEL,
+  ROUTINE_REMINDER_CATEGORY,
 } from './constants';
 
 export async function configureReminderCategoryAndChannelAsync(): Promise<void> {
@@ -27,6 +28,14 @@ export async function configureReminderCategoryAndChannelAsync(): Promise<void> 
       buttonTitle: 'Completar',
       options: { opensAppToForeground: false },
     },
+    {
+      identifier: NOTIFICATION_ACTIONS.snooze,
+      buttonTitle: 'Posponer',
+      options: { opensAppToForeground: false },
+    },
+  ]);
+
+  await Notifications.setNotificationCategoryAsync(ROUTINE_REMINDER_CATEGORY, [
     {
       identifier: NOTIFICATION_ACTIONS.snooze,
       buttonTitle: 'Posponer',

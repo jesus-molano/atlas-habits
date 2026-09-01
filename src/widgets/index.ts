@@ -3,6 +3,7 @@ export * from './AtlasHabitsWidget';
 export * from './AtlasProgressWidget';
 export * from './AtlasTasksWidget';
 export * from './model';
+export * from './layout';
 export * from './refresh';
 export * from './render';
 export * from './theme';

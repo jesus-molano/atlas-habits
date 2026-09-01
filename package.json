@@ -1,7 +1,7 @@
 {
   "name": "atlas-habits",
   "main": "index.ts",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "dependencies": {
     "@expo-google-fonts/manrope": "^0.4.2",
     "@expo/ui": "~57.0.14",

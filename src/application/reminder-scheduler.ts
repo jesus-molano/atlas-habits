@@ -33,7 +33,6 @@ type DefinitionRow = Readonly<{
   local_time: string | null;
   offset_minutes: number;
   snooze_minutes: number;
-  exact_alarm: number;
   schedule_version_id: string;
   version_number: number;
   effective_from: string;
@@ -140,7 +139,6 @@ function mapDefinition(row: DefinitionRow): ReminderScheduleDefinition {
     localTime: row.local_time,
     offsetMinutes: row.offset_minutes,
     snoozeMinutes: row.snooze_minutes,
-    exactAlarm: row.exact_alarm === 1,
     scheduleVersionId: row.schedule_version_id,
     versionNumber: row.version_number,
     effectiveFrom: row.effective_from,
@@ -176,7 +174,6 @@ async function loadDefinitions(
        ) AS local_time,
        rr.offset_minutes,
        rr.snooze_minutes,
-       rr.exact_alarm,
        sv.id AS schedule_version_id,
        sv.version_number,
        sv.effective_from,
@@ -395,7 +392,6 @@ export async function rescheduleAtlasRemindersAsync({
       body: entry.body,
       fireAt: entry.fireAt,
       snoozeMinutes: entry.snoozeMinutes,
-      exactAlarm: entry.exactAlarm,
     });
     try {
       await rememberDelivery(

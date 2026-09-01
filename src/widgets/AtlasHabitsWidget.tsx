@@ -1,6 +1,9 @@
+'use no memo';
+
 import { FlexWidget, TextWidget } from 'react-native-android-widget';
 
 import { createWidgetCompletionActionData, WIDGET_ACTIONS } from './actions';
+import type { AtlasWidgetLayout } from './layout';
 import type { AtlasWidgetSnapshot, WidgetCompletableItem } from './model';
 import type { AtlasWidgetPalette } from './theme';
 import { widgetFonts } from './theme';
@@ -8,20 +11,93 @@ import { widgetFonts } from './theme';
 export interface AtlasHabitsWidgetProps {
   readonly snapshot: AtlasWidgetSnapshot;
   readonly palette: AtlasWidgetPalette;
+  readonly layout: AtlasWidgetLayout;
 }
 
 export function AtlasHabitsWidget({
   snapshot,
   palette,
+  layout,
 }: AtlasHabitsWidgetProps) {
-  const habits = snapshot.habits.slice(0, 4);
+  const habits = snapshot.habits.slice(0, layout.maxHabitRows);
+
+  if (layout.ultraCompact) {
+    const habit = habits[0];
+    const status = `${snapshot.progress.completed}/${snapshot.progress.total}`;
+
+    return (
+      <FlexWidget
+        clickAction={
+          habit?.completed
+            ? 'OPEN_APP'
+            : habit
+              ? WIDGET_ACTIONS.complete
+              : 'OPEN_APP'
+        }
+        clickActionData={
+          habit && !habit.completed
+            ? createWidgetCompletionActionData(habit)
+            : undefined
+        }
+        accessibilityLabel={
+          habit
+            ? habit.completed
+              ? `${habit.title}, completado`
+              : `Completar ${habit.title}`
+            : 'Abrir hábitos en Atlas'
+        }
+        style={{
+          width: 'match_parent',
+          height: 'match_parent',
+          padding: layout.padding,
+          flexDirection: 'row',
+          alignItems: 'center',
+          flexGap: 8,
+          backgroundColor: palette.background,
+          borderColor: palette.border,
+          borderWidth: 1,
+          borderRadius: 18,
+        }}
+      >
+        <TextWidget
+          text={habit ? (habit.completed ? '✓' : '○') : 'HÁBITOS'}
+          style={{
+            color: habit?.completed ? palette.accent : palette.muted,
+            fontFamily: widgetFonts.bold,
+            fontSize: habit ? 18 : layout.titleFontSize,
+            letterSpacing: habit ? 0 : 1.1,
+          }}
+        />
+        <FlexWidget style={{ flex: 1 }}>
+          <TextWidget
+            text={habit?.title ?? 'No hay hábitos para hoy'}
+            maxLines={1}
+            truncate="END"
+            style={{
+              color: palette.text,
+              fontFamily: widgetFonts.medium,
+              fontSize: 14,
+            }}
+          />
+        </FlexWidget>
+        <TextWidget
+          text={status}
+          style={{
+            color: palette.accent,
+            fontFamily: widgetFonts.bold,
+            fontSize: 12,
+          }}
+        />
+      </FlexWidget>
+    );
+  }
 
   return (
     <FlexWidget
       style={{
         width: 'match_parent',
         height: 'match_parent',
-        padding: 16,
+        padding: layout.padding,
         flexDirection: 'column',
         flexGap: 8,
         backgroundColor: palette.background,
@@ -44,7 +120,7 @@ export function AtlasHabitsWidget({
           style={{
             color: palette.muted,
             fontFamily: widgetFonts.bold,
-            fontSize: 11,
+            fontSize: layout.titleFontSize,
             letterSpacing: 1.2,
           }}
         />
@@ -53,7 +129,7 @@ export function AtlasHabitsWidget({
           style={{
             color: palette.accent,
             fontFamily: widgetFonts.bold,
-            fontSize: 14,
+            fontSize: layout.compact ? 13 : 14,
           }}
         />
       </FlexWidget>
@@ -70,7 +146,12 @@ export function AtlasHabitsWidget({
         />
       ) : (
         habits.map((habit) => (
-          <HabitRow key={habit.occurrenceId} habit={habit} palette={palette} />
+          <HabitRow
+            key={habit.occurrenceId}
+            habit={habit}
+            layout={layout}
+            palette={palette}
+          />
         ))
       )}
     </FlexWidget>
@@ -80,9 +161,11 @@ export function AtlasHabitsWidget({
 function HabitRow({
   habit,
   palette,
+  layout,
 }: {
   readonly habit: WidgetCompletableItem;
   readonly palette: AtlasWidgetPalette;
+  readonly layout: AtlasWidgetLayout;
 }) {
   return (
     <FlexWidget
@@ -97,8 +180,8 @@ function HabitRow({
       }
       style={{
         width: 'match_parent',
-        paddingHorizontal: 12,
-        paddingVertical: 9,
+        paddingHorizontal: layout.compact ? 10 : 12,
+        paddingVertical: layout.compact ? 7 : 9,
         flexDirection: 'row',
         alignItems: 'center',
         flexGap: 10,
@@ -111,7 +194,7 @@ function HabitRow({
         style={{
           color: habit.completed ? palette.accent : palette.muted,
           fontFamily: widgetFonts.bold,
-          fontSize: 20,
+          fontSize: layout.compact ? 18 : 20,
         }}
       />
       <FlexWidget style={{ flex: 1 }}>
@@ -122,7 +205,7 @@ function HabitRow({
           style={{
             color: habit.completed ? palette.muted : palette.text,
             fontFamily: widgetFonts.medium,
-            fontSize: 14,
+            fontSize: layout.bodyFontSize,
           }}
         />
       </FlexWidget>

@@ -127,7 +127,6 @@ describe('rescheduleAtlasRemindersAsync', () => {
     const cancelled: string[] = [];
     const scheduledEntries: {
       notificationId?: string;
-      exactAlarm?: boolean;
     }[] = [];
     const scheduledIds = new Set(['atlas-snooze-must-survive']);
     let nextId = 0;
@@ -137,10 +136,7 @@ describe('rescheduleAtlasRemindersAsync', () => {
         cancelled.push(notificationId);
         scheduledIds.delete(notificationId);
       },
-      scheduleOneShot: async (entry: {
-        notificationId?: string;
-        exactAlarm?: boolean;
-      }) => {
+      scheduleOneShot: async (entry: { notificationId?: string }) => {
         scheduledEntries.push(entry);
         const notificationId = entry.notificationId ?? 'unexpected-random-id';
         scheduledIds.add(notificationId);
@@ -160,9 +156,11 @@ describe('rescheduleAtlasRemindersAsync', () => {
       scheduled: 8,
       cancelled: 0,
     });
-    expect(scheduledEntries.every((entry) => entry.exactAlarm === false)).toBe(
-      true,
-    );
+    expect(
+      scheduledEntries.every(
+        (entry) => !Object.prototype.hasOwnProperty.call(entry, 'exactAlarm'),
+      ),
+    ).toBe(true);
     const currentPeriodIds = new Set(
       (
         await database.getAllAsync<{ notification_id: string }>(

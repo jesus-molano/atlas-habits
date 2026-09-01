@@ -48,6 +48,7 @@ service-account*.json
 # Firebase CLI
 .firebase/
 firebase-debug.log*
+firestore-debug.log*
 
 # typescript
 *.tsbuildinfo
@@ -55,3 +56,4 @@ firebase-debug.log*
 # generated native folders
 /ios
 /android
+/modules/*/android/build/

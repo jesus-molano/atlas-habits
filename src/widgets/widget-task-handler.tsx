@@ -50,7 +50,9 @@ export function createAtlasWidgetTaskHandler(
         widgetName,
         props.widgetInfo,
       );
-      props.renderWidget(renderAtlasWidget(widgetName, snapshot));
+      props.renderWidget(
+        renderAtlasWidget(widgetName, snapshot, props.widgetInfo),
+      );
     } catch (error) {
       dependencies.reportError?.(error);
       throw error;

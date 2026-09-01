@@ -405,6 +405,14 @@ function habitCompleted(habit: HabitItem): boolean {
 }
 
 export class SQLiteAtlasWidgetDataSource implements AtlasWidgetDataSource {
+  /**
+   * Android can request several instances while react-native-android-widget
+   * is still rendering the first one. They all use the same SQLite handle, so
+   * one in-flight projection is shared instead of preparing the same query set
+   * concurrently.
+   */
+  private snapshotRequest: Promise<AtlasWidgetSnapshot> | null = null;
+
   constructor(
     private readonly databaseProvider: () => Promise<SQLiteDatabase> = getDatabase,
     private readonly now: () => Date = () => new Date(),
@@ -413,6 +421,22 @@ export class SQLiteAtlasWidgetDataSource implements AtlasWidgetDataSource {
   async getSnapshot(
     _widgetName: AtlasWidgetName,
   ): Promise<AtlasWidgetSnapshot> {
+    if (this.snapshotRequest) return this.snapshotRequest;
+
+    const request = this.loadSnapshot();
+    this.snapshotRequest = request;
+    void request.then(
+      () => this.releaseSnapshotRequest(request),
+      () => this.releaseSnapshotRequest(request),
+    );
+    return request;
+  }
+
+  private releaseSnapshotRequest(request: Promise<AtlasWidgetSnapshot>): void {
+    if (this.snapshotRequest === request) this.snapshotRequest = null;
+  }
+
+  private async loadSnapshot(): Promise<AtlasWidgetSnapshot> {
     const now = this.now();
     const today = localDateFromDate(now);
     const database = await this.databaseProvider();

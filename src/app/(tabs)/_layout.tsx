@@ -27,7 +27,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Button, Text } from '@/components/core';
+import { Button, DurationWheelPicker, Text } from '@/components/core';
 import {
   AtlasCalendarSheet,
   FeedbackSheet,
@@ -36,7 +36,7 @@ import {
 import { useTheme } from '@/design';
 import { useAtlasApp, type AdapterActionResult } from '@/features/atlas';
 import { runSingleFlight } from '@/features/atlas/single-flight';
-import { ChoiceChip } from '@/features/ui';
+import { miniTimerBottom, tabBarHeight } from '@/features/ui/tab-bar-metrics';
 
 function dateKey(date: Date): string {
   const year = date.getFullYear();
@@ -53,10 +53,6 @@ function durationLabel(seconds: number): string {
   return hours > 0
     ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
     : `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
-}
-
-function tabBarExtraHeight(fontScale: number): number {
-  return Math.round(Math.max(0, Math.min(fontScale, 2) - 1) * 18);
 }
 
 function useKeyboardVisible(): boolean {
@@ -132,10 +128,7 @@ function GlobalTimerSurface() {
     ],
     [snapshot.habits, snapshot.tasks],
   );
-  const [selectedItemOverride, setSelectedItemOverride] = useState<
-    string | undefined
-  >();
-  const [minutes, setMinutes] = useState(25);
+  const [manualSeconds, setManualSeconds] = useState(25 * 60);
   const [manualDateOverride, setManualDateOverride] = useState<
     string | undefined
   >();
@@ -162,17 +155,15 @@ function GlobalTimerSurface() {
         setPendingAction(null);
       }
     });
-  const selectedItemId = candidates.some(
-    (item) => item.id === selectedItemOverride,
-  )
-    ? selectedItemOverride
-    : (timerTargetId ?? timer?.itemId ?? candidates[0]?.id);
+  const selectedItemId = timerTargetId ?? timer?.itemId;
   const manualDate = manualDateOverride ?? selectedDate;
   const manualDateIsHistorical = manualDate < dateKey(new Date());
   const selected = candidates.find((item) => item.id === selectedItemId);
+  const selectedIsTask = selected
+    ? snapshot.tasks.some((task) => task.id === selected.id)
+    : false;
   const close = () => {
     setFeedback(null);
-    setSelectedItemOverride(undefined);
     setManualDateOverride(undefined);
     setShowDatePicker(false);
     closeTimerSheet();
@@ -191,8 +182,7 @@ function GlobalTimerSurface() {
             {
               backgroundColor: theme.colors.surfaceElevated,
               borderColor: theme.colors.borderStrong,
-              bottom:
-                Math.max(insets.bottom, 8) + 78 + tabBarExtraHeight(fontScale),
+              bottom: miniTimerBottom(insets.bottom, fontScale),
             },
             theme.shadows.floating,
             pressed && styles.miniTimerPressed,
@@ -222,7 +212,11 @@ function GlobalTimerSurface() {
               ? 'La sesión sigue disponible al cambiar de pestaña o cerrar esta hoja.'
               : manualDateIsHistorical
                 ? 'En una fecha anterior puedes añadir tiempo manual. Un cronómetro siempre empieza en el momento actual.'
-                : 'Elige un hábito de duración o una tarea. El tiempo de una tarea no la marca como completada.'
+                : selected
+                  ? selectedIsTask
+                    ? 'Mide en directo o registra una duración exacta. Registrar tiempo no completa la tarea.'
+                    : 'Mide en directo o registra una duración exacta para este hábito.'
+                  : 'Este elemento ya no está disponible.'
         }
         onClose={close}
         title={
@@ -230,7 +224,7 @@ function GlobalTimerSurface() {
             ? 'Recuperar sesión'
             : timer
               ? timer.title
-              : 'Cronómetro y tiempo manual'
+              : (selected?.title ?? 'Registrar tiempo')
         }
         tone={feedback && !feedback.ok ? 'danger' : 'neutral'}
         visible={timerSheetOpen && !showDatePicker}
@@ -322,24 +316,12 @@ function GlobalTimerSurface() {
           </View>
         ) : (
           <View style={styles.timerSection}>
-            {candidates.length > 0 ? (
-              <View accessibilityRole="radiogroup" style={styles.choiceWrap}>
-                {candidates.map((item) => (
-                  <ChoiceChip
-                    disabled={pendingAction !== null}
-                    key={item.id}
-                    label={item.title}
-                    onPress={() => setSelectedItemOverride(item.id)}
-                    selected={item.id === selectedItemId}
-                  />
-                ))}
-              </View>
-            ) : (
+            {!selected ? (
               <InlineFeedback
-                message="Crea un hábito medido por tiempo o una tarea para empezar."
-                title="No hay elementos compatibles"
+                message="Vuelve a la tarjeta e inténtalo de nuevo."
+                title="No encontramos este elemento"
               />
-            )}
+            ) : null}
             {manualDateIsHistorical ? (
               <InlineFeedback
                 message="La fecha elegida se aplicará al registro manual. Para medir tiempo en directo, vuelve a Hoy."
@@ -359,45 +341,16 @@ function GlobalTimerSurface() {
               />
             )}
             <View style={styles.manualHeader}>
-              <View style={styles.miniTimerCopy}>
-                <Text variant="bodyStrong">Añadir tiempo manual</Text>
-                <Text tone="secondary" variant="caption">
-                  Selecciona minutos y fecha.
-                </Text>
-              </View>
-              <Text tone="accent" variant="bodyStrong">
-                {minutes} min
+              <Text variant="bodyStrong">Añadir tiempo manual</Text>
+              <Text tone="secondary" variant="caption">
+                Desliza horas, minutos y segundos.
               </Text>
             </View>
-            <View style={styles.choiceWrap}>
-              {[5, 10, 15, 25, 30, 45, 60].map((value) => (
-                <ChoiceChip
-                  disabled={pendingAction !== null}
-                  key={value}
-                  label={`${value} min`}
-                  onPress={() => setMinutes(value)}
-                  selected={minutes === value}
-                />
-              ))}
-            </View>
-            <View style={styles.stepper}>
-              <Button
-                accessibilityLabel="Restar cinco minutos"
-                disabled={pendingAction !== null}
-                label="− 5"
-                onPress={() => setMinutes((value) => Math.max(1, value - 5))}
-                size="sm"
-                variant="secondary"
-              />
-              <Button
-                accessibilityLabel="Sumar cinco minutos"
-                disabled={pendingAction !== null}
-                label="+ 5"
-                onPress={() => setMinutes((value) => Math.min(720, value + 5))}
-                size="sm"
-                variant="secondary"
-              />
-            </View>
+            <DurationWheelPicker
+              disabled={pendingAction !== null}
+              onChange={setManualSeconds}
+              valueSeconds={manualSeconds}
+            />
             <Button
               disabled={pendingAction !== null}
               fullWidth
@@ -407,14 +360,20 @@ function GlobalTimerSurface() {
               variant="secondary"
             />
             <Button
-              disabled={!selected || pendingAction !== null}
+              disabled={
+                !selected || manualSeconds <= 0 || pendingAction !== null
+              }
               fullWidth
-              label="Guardar tiempo manual"
+              label={
+                manualSeconds > 0
+                  ? 'Guardar tiempo manual'
+                  : 'Selecciona una duración'
+              }
               loading={pendingAction === 'manual-duration'}
               onPress={() =>
                 selected &&
                 void run('manual-duration', () =>
-                  recordManualDuration(selected.id, minutes * 60, manualDate),
+                  recordManualDuration(selected.id, manualSeconds, manualDate),
                 )
               }
               variant="secondary"
@@ -457,7 +416,7 @@ function AtlasTabBar({ state, descriptors, navigation }: AtlasTabBarProps) {
       style={[
         styles.customTabBar,
         {
-          height: 96 + insets.bottom + tabBarExtraHeight(fontScale),
+          height: tabBarHeight(insets.bottom, fontScale),
           paddingBottom: Math.max(insets.bottom, 8),
         },
       ]}
@@ -702,7 +661,5 @@ const styles = StyleSheet.create({
   sheetTimerDigits: { fontVariant: ['tabular-nums'], paddingVertical: 8 },
   timerSection: { gap: 12 },
   timerActions: { gap: 8 },
-  choiceWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  manualHeader: { alignItems: 'center', flexDirection: 'row', gap: 12 },
-  stepper: { flexDirection: 'row', gap: 8, justifyContent: 'center' },
+  manualHeader: { gap: 2 },
 });

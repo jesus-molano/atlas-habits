@@ -35,6 +35,7 @@ import type {
   AtlasReminder,
   AtlasSchedule,
   AtlasSnapshot,
+  AtlasDayView,
   DashboardSectionId,
   HabitItem,
   Priority,
@@ -657,7 +658,7 @@ function historyProgress(
   today: LocalDate,
   now: Date,
   historyDays: readonly DashboardSnapshot[],
-): { eligibleActions: number; ratio: number } {
+): { completed: number; eligibleActions: number; ratio: number } {
   let completed = 0;
   let total = 0;
   for (const item of day.items) {
@@ -679,6 +680,7 @@ function historyProgress(
     }
   }
   return {
+    completed,
     eligibleActions: total,
     ratio: total === 0 ? 0 : completed / total,
   };
@@ -979,6 +981,38 @@ export function mapDashboardToAtlasSnapshot(
     }),
     habitHistory,
     sync: relations.sync ?? { status: 'local-only' },
+  };
+}
+
+export function mapDashboardToAtlasDayView(
+  input: AtlasProjectionInput,
+): AtlasDayView {
+  const snapshot = mapDashboardToAtlasSnapshot({
+    ...input,
+    historyDays: input.historyDays ?? [input.day],
+  });
+  const scheduledItemIds = new Set(
+    input.day.items
+      .filter((item) => isScheduledForDay(input.day, item.id))
+      .map((item) => item.id),
+  );
+  const progress = historyProgress(
+    input.day,
+    input.day.localDate as LocalDate,
+    input.now,
+    input.historyDays ?? [input.day],
+  );
+
+  return {
+    localDate: input.day.localDate,
+    habits: snapshot.habits.filter((item) => scheduledItemIds.has(item.id)),
+    tasks: snapshot.tasks.filter((item) => scheduledItemIds.has(item.id)),
+    routines: snapshot.routines.filter((item) => scheduledItemIds.has(item.id)),
+    progress: {
+      completed: progress.completed,
+      total: progress.eligibleActions,
+      ratio: progress.ratio,
+    },
   };
 }
 

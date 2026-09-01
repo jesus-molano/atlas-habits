@@ -35,12 +35,15 @@ import {
 import type {
   AdapterActionResult,
   AtlasAppAdapter,
+  AtlasDayMutation,
+  AtlasDayView,
   AtlasSnapshot,
   CreateItemDraft,
   DashboardSectionId,
   HabitDayRecord,
   HabitItem,
   RoutineItem,
+  TaskItem,
 } from './types';
 
 const STORAGE_KEY = '@atlas/local-snapshot/v1';
@@ -63,6 +66,35 @@ function habitDone(habit: HabitItem): boolean {
       ? expectedCompletions(habit.schedule)
       : habit.target;
   return habit.value >= target;
+}
+
+type HistoricalDayStatus =
+  'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
+
+type HistoricalDayState = Readonly<{
+  date: string;
+  status: HistoricalDayStatus;
+  view: AtlasDayView | null;
+  message?: string;
+}>;
+
+function withRecalculatedProgress(view: AtlasDayView): AtlasDayView {
+  const activeHabits = view.habits.filter(
+    (habit) => !habit.skipped && !habit.paused,
+  );
+  const total = activeHabits.length + view.tasks.length + view.routines.length;
+  const completed =
+    activeHabits.filter(habitDone).length +
+    view.tasks.filter((task) => task.completed).length +
+    view.routines.filter((routine) => routine.completed).length;
+  return {
+    ...view,
+    progress: {
+      completed,
+      total,
+      ratio: total === 0 ? 0 : completed / total,
+    },
+  };
 }
 
 function habitsForDate(snapshot: AtlasSnapshot, date: string): HabitItem[] {
@@ -183,8 +215,12 @@ export type AtlasAppContextValue = {
   snapshot: AtlasSnapshot;
   selectedDate: string;
   selectedHabits: HabitItem[];
+  selectedTasks: TaskItem[];
+  selectedRoutines: RoutineItem[];
   isToday: boolean;
   hydrated: boolean;
+  historicalDayStatus: HistoricalDayStatus;
+  historicalDayMessage?: string;
   progress: { completed: number; total: number; ratio: number };
   toggleHabit(id: string): void;
   setHabitValue(id: string, value: number): void;
@@ -208,16 +244,21 @@ export type AtlasAppContextValue = {
   ): Promise<AdapterActionResult>;
   resolveLegacyTimers(itemId: string | null): Promise<AdapterActionResult>;
   timerTargetId?: string;
-  toggleTask(id: string): void;
-  toggleSubtask(taskId: string, subtaskId: string): void;
+  toggleTask(id: string, localDate?: string): void;
+  toggleSubtask(taskId: string, subtaskId: string, localDate?: string): void;
   createItem(draft: CreateItemDraft): string;
   updateItem(id: string, draft: CreateItemDraft): void;
   deleteItem(id: string): void;
   moveDashboardSection(section: DashboardSectionId, direction: -1 | 1): void;
-  startRoutine(id: string): void;
-  setRoutineStep(id: string, stepId: string, completed: boolean): void;
-  finishRoutine(id: string): void;
-  resetRoutine(id: string): void;
+  startRoutine(id: string, localDate?: string): void;
+  setRoutineStep(
+    id: string,
+    stepId: string,
+    completed: boolean,
+    localDate?: string,
+  ): void;
+  finishRoutine(id: string, localDate?: string): void;
+  resetRoutine(id: string, localDate?: string): void;
   connectGoogle(): Promise<AdapterActionResult>;
   disconnectGoogle(): Promise<AdapterActionResult>;
   requestNotificationAccess(): Promise<AdapterActionResult>;
@@ -248,10 +289,133 @@ export function AtlasAppProvider({
   const [hydrated, setHydrated] = useState(false);
   const [timerSheetOpen, setTimerSheetOpen] = useState(false);
   const [timerTargetId, setTimerTargetId] = useState<string | undefined>();
+  const [historicalDay, setHistoricalDay] = useState<HistoricalDayState>({
+    date: '',
+    status: 'idle',
+    view: null,
+  });
   const adapterRef = useRef(adapter);
   const snapshotApplyGuardRef = useRef(new SnapshotApplyGuard());
   const optimisticMutationGenerationRef = useRef(0);
   const adapterRefreshGenerationRef = useRef(0);
+  const historicalDayRef = useRef(historicalDay);
+  const historicalDayRequestGenerationRef = useRef(0);
+  const historicalDayMutationGenerationRef = useRef(0);
+
+  const commitHistoricalDay = useCallback((next: HistoricalDayState) => {
+    historicalDayRef.current = next;
+    setHistoricalDay(next);
+  }, []);
+
+  const requestHistoricalDay = useCallback(
+    async (date: string, showLoading = true): Promise<void> => {
+      const requestGeneration = ++historicalDayRequestGenerationRef.current;
+      historicalDayMutationGenerationRef.current += 1;
+      const loader = adapterRef.current.loadDay;
+      const previous = historicalDayRef.current;
+      if (!loader) {
+        commitHistoricalDay({
+          date,
+          status: 'unavailable',
+          view: null,
+          message:
+            'Este almacenamiento no conserva tareas ni rutinas por fecha.',
+        });
+        return;
+      }
+      if (showLoading) {
+        commitHistoricalDay({
+          date,
+          status: 'loading',
+          view: previous.date === date ? previous.view : null,
+        });
+      }
+      try {
+        const view = await loader.call(adapterRef.current, date);
+        if (requestGeneration !== historicalDayRequestGenerationRef.current) {
+          return;
+        }
+        commitHistoricalDay(
+          view
+            ? { date, status: 'ready', view }
+            : {
+                date,
+                status: 'unavailable',
+                view: null,
+                message: 'No se pudo reconstruir el registro de esta fecha.',
+              },
+        );
+      } catch {
+        if (requestGeneration !== historicalDayRequestGenerationRef.current) {
+          return;
+        }
+        commitHistoricalDay({
+          date,
+          status: 'error',
+          view: previous.date === date ? previous.view : null,
+          message:
+            'No se pudo cargar esta fecha. Tus datos de Hoy no han cambiado.',
+        });
+      }
+    },
+    [commitHistoricalDay],
+  );
+
+  const applyHistoricalDayMutation = useCallback(
+    (
+      date: string,
+      mutation: AtlasDayMutation,
+      optimisticView: AtlasDayView,
+    ): void => {
+      const applyMutation = adapterRef.current.applyDayMutation;
+      if (!applyMutation) {
+        commitHistoricalDay({
+          date,
+          status: 'unavailable',
+          view: historicalDayRef.current.view,
+          message: 'Este almacenamiento no permite corregir días anteriores.',
+        });
+        return;
+      }
+      historicalDayRequestGenerationRef.current += 1;
+      const mutationGeneration = ++historicalDayMutationGenerationRef.current;
+      commitHistoricalDay({ date, status: 'ready', view: optimisticView });
+      void applyMutation
+        .call(adapterRef.current, date, mutation)
+        .then((view) => {
+          if (
+            mutationGeneration !== historicalDayMutationGenerationRef.current
+          ) {
+            return;
+          }
+          commitHistoricalDay(
+            view
+              ? { date, status: 'ready', view }
+              : {
+                  date,
+                  status: 'error',
+                  view: optimisticView,
+                  message: 'No se pudo confirmar el cambio de esta fecha.',
+                },
+          );
+        })
+        .catch(() => {
+          if (
+            mutationGeneration !== historicalDayMutationGenerationRef.current
+          ) {
+            return;
+          }
+          commitHistoricalDay({
+            date,
+            status: 'error',
+            view: optimisticView,
+            message:
+              'No se pudo guardar el cambio. Vuelve a intentarlo antes de salir.',
+          });
+        });
+    },
+    [commitHistoricalDay],
+  );
 
   useEffect(() => {
     adapterRef.current = adapter;
@@ -311,10 +475,29 @@ export function AtlasAppProvider({
     };
   }, [adapter]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    if (selectedDate === todayKey()) {
+      historicalDayRequestGenerationRef.current += 1;
+      historicalDayMutationGenerationRef.current += 1;
+      return;
+    }
+    void requestHistoricalDay(selectedDate);
+    return () => {
+      historicalDayRequestGenerationRef.current += 1;
+    };
+  }, [
+    adapter,
+    commitHistoricalDay,
+    hydrated,
+    requestHistoricalDay,
+    selectedDate,
+  ]);
+
   const persist = useCallback(
     (
       updater: (current: AtlasSnapshot) => AtlasSnapshot,
-      historyDate = selectedDate,
+      historyDate = todayKey(),
     ) => {
       snapshotApplyGuardRef.current.markOptimisticMutation();
       optimisticMutationGenerationRef.current += 1;
@@ -328,11 +511,23 @@ export function AtlasAppProvider({
         return next;
       });
     },
-    [hydrated, selectedDate],
+    [hydrated],
   );
 
   const updateHabitForDate = useCallback(
     (id: string, date: string, update: (habit: HabitItem) => HabitItem) => {
+      if (date !== todayKey()) {
+        const historical = historicalDayRef.current;
+        if (historical.date === date && historical.view) {
+          const view = withRecalculatedProgress({
+            ...historical.view,
+            habits: historical.view.habits.map((habit) =>
+              habit.id === id ? update(habit) : habit,
+            ),
+          });
+          commitHistoricalDay({ date, status: 'ready', view });
+        }
+      }
       persist((current) => {
         if (date === todayKey()) {
           return {
@@ -374,7 +569,7 @@ export function AtlasAppProvider({
         };
       }, date);
     },
-    [persist],
+    [commitHistoricalDay, persist],
   );
 
   const updateSelectedHabit = useCallback(
@@ -524,28 +719,98 @@ export function AtlasAppProvider({
   }, []);
 
   const toggleTask = useCallback(
-    (id: string) => {
-      persist((current) => ({
-        ...current,
-        tasks: current.tasks.map((task) =>
-          task.id === id ? toggleTaskCompletion(task) : task,
+    (id: string, localDate = todayKey()) => {
+      if (localDate === todayKey()) {
+        persist(
+          (current) => ({
+            ...current,
+            tasks: current.tasks.map((task) =>
+              task.id === id ? toggleTaskCompletion(task) : task,
+            ),
+          }),
+          localDate,
+        );
+        return;
+      }
+
+      const historical = historicalDayRef.current;
+      const task = historical.view?.tasks.find((item) => item.id === id);
+      if (historical.date !== localDate || !historical.view || !task) return;
+      const nextTask = toggleTaskCompletion(task);
+      const optimisticView = withRecalculatedProgress({
+        ...historical.view,
+        tasks: historical.view.tasks.map((item) =>
+          item.id === id ? nextTask : item,
         ),
-      }));
+      });
+      applyHistoricalDayMutation(
+        localDate,
+        {
+          kind: 'task.update',
+          taskId: id,
+          completed: nextTask.completed,
+          subtasks: nextTask.subtasks
+            .filter(
+              (subtask) =>
+                task.subtasks.find((entry) => entry.id === subtask.id)
+                  ?.completed !== subtask.completed,
+            )
+            .map((subtask) => ({
+              id: subtask.id,
+              completed: subtask.completed,
+            })),
+        },
+        optimisticView,
+      );
     },
-    [persist],
+    [applyHistoricalDayMutation, persist],
   );
 
   const toggleSubtask = useCallback(
-    (taskId: string, subtaskId: string) => {
-      persist((current) => ({
-        ...current,
-        tasks: current.tasks.map((task) => {
-          if (task.id !== taskId) return task;
-          return toggleTaskSubtaskCompletion(task, subtaskId);
-        }),
-      }));
+    (taskId: string, subtaskId: string, localDate = todayKey()) => {
+      if (localDate === todayKey()) {
+        persist(
+          (current) => ({
+            ...current,
+            tasks: current.tasks.map((task) => {
+              if (task.id !== taskId) return task;
+              return toggleTaskSubtaskCompletion(task, subtaskId);
+            }),
+          }),
+          localDate,
+        );
+        return;
+      }
+
+      const historical = historicalDayRef.current;
+      const task = historical.view?.tasks.find((item) => item.id === taskId);
+      if (historical.date !== localDate || !historical.view || !task) return;
+      const nextTask = toggleTaskSubtaskCompletion(task, subtaskId);
+      if (nextTask === task) return;
+      const changedSubtask = nextTask.subtasks.find(
+        (subtask) => subtask.id === subtaskId,
+      );
+      if (!changedSubtask) return;
+      const optimisticView = withRecalculatedProgress({
+        ...historical.view,
+        tasks: historical.view.tasks.map((item) =>
+          item.id === taskId ? nextTask : item,
+        ),
+      });
+      applyHistoricalDayMutation(
+        localDate,
+        {
+          kind: 'task.update',
+          taskId,
+          completed: nextTask.completed,
+          subtasks: [
+            { id: changedSubtask.id, completed: changedSubtask.completed },
+          ],
+        },
+        optimisticView,
+      );
     },
-    [persist],
+    [applyHistoricalDayMutation, persist],
   );
 
   const createItem = useCallback(
@@ -777,56 +1042,173 @@ export function AtlasAppProvider({
 
   const updateRoutine = useCallback(
     (id: string, update: (routine: RoutineItem) => RoutineItem) => {
-      persist((current) => ({
-        ...current,
-        routines: current.routines.map((routine) =>
-          routine.id === id ? update(routine) : routine,
-        ),
-      }));
+      persist(
+        (current) => ({
+          ...current,
+          routines: current.routines.map((routine) =>
+            routine.id === id ? update(routine) : routine,
+          ),
+        }),
+        todayKey(),
+      );
     },
     [persist],
   );
 
   const startRoutine = useCallback(
-    (id: string) =>
-      updateRoutine(id, (routine) => ({ ...routine, running: true })),
-    [updateRoutine],
+    (id: string, localDate = todayKey()) => {
+      if (localDate === todayKey()) {
+        updateRoutine(id, (routine) => ({ ...routine, running: true }));
+        return;
+      }
+      const historical = historicalDayRef.current;
+      const routine = historical.view?.routines.find((item) => item.id === id);
+      if (
+        historical.date !== localDate ||
+        !historical.view ||
+        !routine ||
+        routine.running ||
+        routine.completed
+      ) {
+        return;
+      }
+      const optimisticView = withRecalculatedProgress({
+        ...historical.view,
+        routines: historical.view.routines.map((item) =>
+          item.id === id ? { ...item, running: true } : item,
+        ),
+      });
+      applyHistoricalDayMutation(
+        localDate,
+        { kind: 'routine.start', routineId: id },
+        optimisticView,
+      );
+    },
+    [applyHistoricalDayMutation, updateRoutine],
   );
 
   const setRoutineStep = useCallback(
-    (id: string, stepId: string, completed: boolean) => {
-      updateRoutine(id, (routine) => ({
-        ...routine,
-        running: true,
-        steps: routine.steps.map((step) =>
-          step.id === stepId ? { ...step, completed } : step,
+    (
+      id: string,
+      stepId: string,
+      completed: boolean,
+      localDate = todayKey(),
+    ) => {
+      if (localDate === todayKey()) {
+        updateRoutine(id, (routine) => ({
+          ...routine,
+          running: true,
+          steps: routine.steps.map((step) =>
+            step.id === stepId ? { ...step, completed } : step,
+          ),
+        }));
+        return;
+      }
+      const historical = historicalDayRef.current;
+      const routine = historical.view?.routines.find((item) => item.id === id);
+      const step = routine?.steps.find((item) => item.id === stepId);
+      if (
+        historical.date !== localDate ||
+        !historical.view ||
+        !routine ||
+        !step ||
+        step.completed === completed
+      ) {
+        return;
+      }
+      const optimisticView = withRecalculatedProgress({
+        ...historical.view,
+        routines: historical.view.routines.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                running: true,
+                steps: item.steps.map((entry) =>
+                  entry.id === stepId ? { ...entry, completed } : entry,
+                ),
+              }
+            : item,
         ),
-      }));
+      });
+      applyHistoricalDayMutation(
+        localDate,
+        { kind: 'routine.step', routineId: id, stepId, completed },
+        optimisticView,
+      );
     },
-    [updateRoutine],
+    [applyHistoricalDayMutation, updateRoutine],
   );
 
   const finishRoutine = useCallback(
-    (id: string) =>
-      updateRoutine(id, (routine) => ({
-        ...routine,
-        completed: routine.steps
-          .filter((step) => step.required)
-          .every((step) => step.completed),
-        running: false,
-      })),
-    [updateRoutine],
+    (id: string, localDate = todayKey()) => {
+      if (localDate === todayKey()) {
+        updateRoutine(id, (routine) => ({
+          ...routine,
+          completed: routine.steps
+            .filter((step) => step.required)
+            .every((step) => step.completed),
+          running: false,
+        }));
+        return;
+      }
+      const historical = historicalDayRef.current;
+      const routine = historical.view?.routines.find((item) => item.id === id);
+      if (historical.date !== localDate || !historical.view || !routine) return;
+      const completed = routine.steps
+        .filter((step) => step.required)
+        .every((step) => step.completed);
+      const optimisticView = withRecalculatedProgress({
+        ...historical.view,
+        routines: historical.view.routines.map((item) =>
+          item.id === id ? { ...item, completed, running: false } : item,
+        ),
+      });
+      applyHistoricalDayMutation(
+        localDate,
+        { kind: 'routine.finish', routineId: id, completed },
+        optimisticView,
+      );
+    },
+    [applyHistoricalDayMutation, updateRoutine],
   );
 
   const resetRoutine = useCallback(
-    (id: string) =>
-      updateRoutine(id, (routine) => ({
-        ...routine,
-        completed: false,
-        running: false,
-        steps: routine.steps.map((step) => ({ ...step, completed: false })),
-      })),
-    [updateRoutine],
+    (id: string, localDate = todayKey()) => {
+      if (localDate === todayKey()) {
+        updateRoutine(id, (routine) => ({
+          ...routine,
+          completed: false,
+          running: false,
+          steps: routine.steps.map((step) => ({ ...step, completed: false })),
+        }));
+        return;
+      }
+      const historical = historicalDayRef.current;
+      const routine = historical.view?.routines.find((item) => item.id === id);
+      if (historical.date !== localDate || !historical.view || !routine) return;
+      const optimisticView = withRecalculatedProgress({
+        ...historical.view,
+        routines: historical.view.routines.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                completed: false,
+                running: false,
+                steps: item.steps.map((step) => ({
+                  ...step,
+                  completed: false,
+                })),
+              }
+            : item,
+        ),
+      });
+      applyHistoricalDayMutation(
+        localDate,
+        { kind: 'routine.reset', routineId: id },
+        optimisticView,
+      );
+    },
+    [applyHistoricalDayMutation, updateRoutine],
   );
 
   const runAdapterAction = useCallback(
@@ -888,42 +1270,71 @@ export function AtlasAppProvider({
     return result;
   }, [runAdapterAction, setSyncState]);
 
-  const progress = useMemo(() => {
-    const selectedHabits = habitsForDate(snapshot, selectedDate);
-    const activeHabits = selectedHabits.filter(
-      (habit) => !habit.skipped && !habit.paused,
-    );
-    const isToday = selectedDate === todayKey();
-    const scheduledTasks = snapshot.tasks.filter((item) =>
-      isScheduledOnDate(item.schedule, selectedDate),
-    );
-    const scheduledRoutines = snapshot.routines.filter((item) =>
-      isScheduledOnDate(item.schedule, selectedDate),
-    );
-    const total =
-      activeHabits.length +
-      (isToday ? scheduledTasks.length + scheduledRoutines.length : 0);
-    const completed =
-      activeHabits.filter(habitDone).length +
-      (isToday
-        ? scheduledTasks.filter((item) => item.completed).length +
-          scheduledRoutines.filter((item) => item.completed).length
-        : 0);
-    return { completed, total, ratio: total === 0 ? 0 : completed / total };
-  }, [selectedDate, snapshot]);
-
+  const viewingToday = selectedDate === todayKey();
+  const selectedHistoricalView =
+    !viewingToday && historicalDay.date === selectedDate
+      ? historicalDay.view
+      : null;
   const selectedHabits = useMemo(
-    () => habitsForDate(snapshot, selectedDate),
-    [selectedDate, snapshot],
+    () =>
+      selectedHistoricalView?.habits ?? habitsForDate(snapshot, selectedDate),
+    [selectedDate, selectedHistoricalView, snapshot],
   );
+  const selectedTasks = useMemo(
+    () =>
+      selectedHistoricalView?.tasks ??
+      (viewingToday
+        ? snapshot.tasks.filter((item) =>
+            isScheduledOnDate(item.schedule, selectedDate),
+          )
+        : []),
+    [selectedDate, selectedHistoricalView, snapshot.tasks, viewingToday],
+  );
+  const selectedRoutines = useMemo(
+    () =>
+      selectedHistoricalView?.routines ??
+      (viewingToday
+        ? snapshot.routines.filter((item) =>
+            isScheduledOnDate(item.schedule, selectedDate),
+          )
+        : []),
+    [selectedDate, selectedHistoricalView, snapshot.routines, viewingToday],
+  );
+  const progress = useMemo(() => {
+    if (selectedHistoricalView) return selectedHistoricalView.progress;
+    return withRecalculatedProgress({
+      localDate: selectedDate,
+      habits: selectedHabits,
+      tasks: selectedTasks,
+      routines: selectedRoutines,
+      progress: { completed: 0, total: 0, ratio: 0 },
+    }).progress;
+  }, [
+    selectedDate,
+    selectedHabits,
+    selectedHistoricalView,
+    selectedRoutines,
+    selectedTasks,
+  ]);
 
   const value = useMemo<AtlasAppContextValue>(
     () => ({
       snapshot,
       selectedDate,
       selectedHabits,
-      isToday: selectedDate === todayKey(),
+      selectedTasks,
+      selectedRoutines,
+      isToday: viewingToday,
       hydrated,
+      historicalDayStatus: viewingToday
+        ? 'idle'
+        : historicalDay.date === selectedDate
+          ? historicalDay.status
+          : 'loading',
+      historicalDayMessage:
+        !viewingToday && historicalDay.date === selectedDate
+          ? historicalDay.message
+          : undefined,
       progress,
       toggleHabit,
       setHabitValue,
@@ -942,8 +1353,21 @@ export function AtlasAppProvider({
       stopTimer: (localDate = selectedDate) =>
         runTimerAction('stopTimer', [localDate]),
       cancelTimer: () => runTimerAction('cancelTimer'),
-      recordManualDuration: (itemId, seconds, localDate = selectedDate) =>
-        runTimerAction('recordManualDuration', [itemId, seconds, localDate]),
+      recordManualDuration: async (
+        itemId,
+        seconds,
+        localDate = selectedDate,
+      ) => {
+        const result = await runTimerAction('recordManualDuration', [
+          itemId,
+          seconds,
+          localDate,
+        ]);
+        if (result.ok && localDate !== todayKey()) {
+          await requestHistoricalDay(localDate, false).catch(() => undefined);
+        }
+        return result;
+      },
       resolveLegacyTimers: (itemId) =>
         runTimerAction('resolveLegacyTimers', [itemId]),
       toggleTask,
@@ -980,6 +1404,9 @@ export function AtlasAppProvider({
       disconnectGoogle,
       finishRoutine,
       hydrated,
+      historicalDay.date,
+      historicalDay.message,
+      historicalDay.status,
       moveDashboardSection,
       progress,
       pauseHabit,
@@ -995,7 +1422,10 @@ export function AtlasAppProvider({
       closeTimerSheet,
       openTimerSheet,
       refreshAfterAdapterMutation,
+      requestHistoricalDay,
       runTimerAction,
+      selectedRoutines,
+      selectedTasks,
       startRoutine,
       timerSheetOpen,
       timerTargetId,
@@ -1003,6 +1433,7 @@ export function AtlasAppProvider({
       toggleSubtask,
       toggleTask,
       updateItem,
+      viewingToday,
     ],
   );
 

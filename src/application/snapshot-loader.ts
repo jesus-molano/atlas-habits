@@ -2,11 +2,14 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import type { CommandGateway } from '../data/command-gateway';
 import { DashboardRepository } from '../data/repositories/dashboard-repository';
-import { LOCAL_WORKSPACE_ID } from '../data/types';
+import { LOCAL_WORKSPACE_ID, type DashboardSnapshot } from '../data/types';
 import type { DashboardSectionId, SyncState } from '../features/atlas/types';
 
 import { localDateFromDate, recentLocalDates } from './date-time';
-import { mapDashboardToAtlasSnapshot } from './projection';
+import {
+  mapDashboardToAtlasDayView,
+  mapDashboardToAtlasSnapshot,
+} from './projection';
 
 type CountRow = { count: number };
 type TagRow = { id: string; name: string };
@@ -90,6 +93,81 @@ async function loadActivePauses(
   return result;
 }
 
+async function loadProjectionRelations(
+  database: SQLiteDatabase,
+  gateway: CommandGateway,
+  day: DashboardSnapshot,
+  localDate: string,
+  syncState: SyncState,
+) {
+  const taskIds = day.items
+    .filter((item) => item.type === 'task')
+    .map((item) => item.id);
+  const routineIds = day.items
+    .filter((item) => item.type === 'routine')
+    .map((item) => item.id);
+  const itemIds = day.items.map((item) => item.id);
+
+  const [
+    tagRows,
+    dashboardOrder,
+    taskSubtaskStatesByTaskId,
+    activePausesByItemId,
+    taskSubtaskEntries,
+    routineStepEntries,
+    reminderEntries,
+    routineRunStepEntries,
+  ] = await Promise.all([
+    database.getAllAsync<TagRow>(
+      `SELECT id, name FROM tags
+       WHERE workspace_id = ? AND deleted_at IS NULL`,
+      [LOCAL_WORKSPACE_ID],
+    ),
+    loadDashboardOrder(database),
+    loadTaskSubtaskStates(database, localDate),
+    loadActivePauses(database, localDate),
+    Promise.all(
+      taskIds.map(
+        async (taskId) =>
+          [taskId, await gateway.queries.listTaskSubtasks(taskId)] as const,
+      ),
+    ),
+    Promise.all(
+      routineIds.map(
+        async (routineId) =>
+          [
+            routineId,
+            await gateway.queries.listRoutineSteps(routineId),
+          ] as const,
+      ),
+    ),
+    Promise.all(
+      itemIds.map(
+        async (itemId) =>
+          [itemId, await gateway.queries.listReminderRules(itemId)] as const,
+      ),
+    ),
+    Promise.all(
+      day.routineRuns.map(
+        async (run) =>
+          [run.id, await gateway.queries.listRoutineRunSteps(run.id)] as const,
+      ),
+    ),
+  ]);
+
+  return {
+    activePausesByItemId,
+    dashboardOrder,
+    remindersByItemId: recordFromEntries(reminderEntries),
+    routineRunStepsByRunId: recordFromEntries(routineRunStepEntries),
+    routineStepsByRoutineId: recordFromEntries(routineStepEntries),
+    sync: syncState,
+    tagNamesById: Object.fromEntries(tagRows.map((tag) => [tag.id, tag.name])),
+    taskSubtaskStatesByTaskId,
+    taskSubtasksByTaskId: recordFromEntries(taskSubtaskEntries),
+  };
+}
+
 export type LoadAtlasSnapshotOptions = Readonly<{
   database: SQLiteDatabase;
   gateway: CommandGateway;
@@ -121,82 +199,17 @@ export async function loadAtlasSnapshotFromSQLite({
   const day =
     historyDays.find((entry) => entry.localDate === today) ??
     (await dashboard.loadDay(today));
-  const taskIds = day.items
-    .filter((item) => item.type === 'task')
-    .map((item) => item.id);
-  const routineIds = day.items
-    .filter((item) => item.type === 'routine')
-    .map((item) => item.id);
-  const itemIds = day.items.map((item) => item.id);
-
-  const [
-    tagRows,
-    dashboardOrder,
-    taskSubtaskStatesByTaskId,
-    activePausesByItemId,
-    taskSubtaskEntries,
-    routineStepEntries,
-    reminderEntries,
-    activeTimer,
-    legacyTimerItemIds,
-  ] = await Promise.all([
-    database.getAllAsync<TagRow>(
-      `SELECT id, name FROM tags
-       WHERE workspace_id = ? AND deleted_at IS NULL`,
-      [LOCAL_WORKSPACE_ID],
-    ),
-    loadDashboardOrder(database),
-    loadTaskSubtaskStates(database, today),
-    loadActivePauses(database, today),
-    Promise.all(
-      taskIds.map(
-        async (taskId) =>
-          [taskId, await gateway.queries.listTaskSubtasks(taskId)] as const,
-      ),
-    ),
-    Promise.all(
-      routineIds.map(
-        async (routineId) =>
-          [
-            routineId,
-            await gateway.queries.listRoutineSteps(routineId),
-          ] as const,
-      ),
-    ),
-    Promise.all(
-      itemIds.map(
-        async (itemId) =>
-          [itemId, await gateway.queries.listReminderRules(itemId)] as const,
-      ),
-    ),
+  const [relations, activeTimer, legacyTimerItemIds] = await Promise.all([
+    loadProjectionRelations(database, gateway, day, today, syncState),
     gateway.progress.getActiveTimer(),
     gateway.progress.listLegacyTimerItemIds(),
   ]);
-
-  const routineRunStepEntries = await Promise.all(
-    day.routineRuns.map(
-      async (run) =>
-        [run.id, await gateway.queries.listRoutineRunSteps(run.id)] as const,
-    ),
-  );
 
   const snapshot = mapDashboardToAtlasSnapshot({
     day,
     historyDays,
     now,
-    relations: {
-      activePausesByItemId,
-      dashboardOrder,
-      remindersByItemId: recordFromEntries(reminderEntries),
-      routineRunStepsByRunId: recordFromEntries(routineRunStepEntries),
-      routineStepsByRoutineId: recordFromEntries(routineStepEntries),
-      sync: syncState,
-      tagNamesById: Object.fromEntries(
-        tagRows.map((tag) => [tag.id, tag.name]),
-      ),
-      taskSubtaskStatesByTaskId,
-      taskSubtasksByTaskId: recordFromEntries(taskSubtaskEntries),
-    },
+    relations,
   });
   return {
     ...snapshot,
@@ -212,4 +225,35 @@ export async function loadAtlasSnapshotFromSQLite({
       : undefined,
     legacyTimerItemIds,
   };
+}
+
+export type LoadAtlasDayViewOptions = Readonly<{
+  database: SQLiteDatabase;
+  gateway: CommandGateway;
+  localDate: string;
+  now?: Date;
+  syncState?: SyncState;
+}>;
+
+export async function loadAtlasDayViewFromSQLite({
+  database,
+  gateway,
+  localDate,
+  now = new Date(`${localDate}T23:59:59.999`),
+  syncState = { status: 'local-only' },
+}: LoadAtlasDayViewOptions) {
+  const day = await new DashboardRepository(database).loadDay(localDate);
+  const relations = await loadProjectionRelations(
+    database,
+    gateway,
+    day,
+    localDate,
+    syncState,
+  );
+  return mapDashboardToAtlasDayView({
+    day,
+    historyDays: [day],
+    now,
+    relations,
+  });
 }

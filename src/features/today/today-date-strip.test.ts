@@ -1,44 +1,72 @@
 import { describe, expect, it } from 'vitest';
 
-import { todayDateStripKeys } from './today-date-strip';
+import {
+  TODAY_DATE_STRIP_INDICES,
+  TODAY_DATE_STRIP_ITEM_COUNT,
+  TODAY_DATE_STRIP_TODAY_INDEX,
+  todayDateStripDateAt,
+  todayDateStripIndexForDate,
+  todayDateStripSafeSelection,
+} from './today-date-strip';
 
-const TODAY = new Date('2026-09-01T12:00:00');
+const TODAY = '2026-09-01';
 
-describe('todayDateStripKeys', () => {
-  it('keeps one stable window while selecting any recent day', () => {
-    const expected = [
-      '2026-08-26',
-      '2026-08-27',
-      '2026-08-28',
-      '2026-08-29',
-      '2026-08-30',
-      '2026-08-31',
-      '2026-09-01',
-    ];
-
-    expect(todayDateStripKeys('2026-08-26', TODAY)).toEqual(expected);
-    expect(todayDateStripKeys('2026-08-31', TODAY)).toEqual(expected);
-    expect(todayDateStripKeys('2026-09-01', TODAY)).toEqual(expected);
+describe('continuous today date strip', () => {
+  it('keeps a stable virtual list with today at its right edge', () => {
+    expect(TODAY_DATE_STRIP_INDICES).toHaveLength(TODAY_DATE_STRIP_ITEM_COUNT);
+    expect(todayDateStripDateAt(TODAY_DATE_STRIP_TODAY_INDEX, TODAY)).toBe(
+      TODAY,
+    );
+    expect(todayDateStripIndexForDate(TODAY, TODAY)).toBe(
+      TODAY_DATE_STRIP_TODAY_INDEX,
+    );
   });
 
-  it('centers an older selected date in a seven-day window', () => {
-    const dates = todayDateStripKeys('2026-07-15', TODAY);
-
-    expect(dates).toEqual([
-      '2026-07-12',
-      '2026-07-13',
-      '2026-07-14',
-      '2026-07-15',
-      '2026-07-16',
-      '2026-07-17',
-      '2026-07-18',
-    ]);
+  it('moves through month and leap-year boundaries one day at a time', () => {
+    const leapToday = '2028-03-01';
+    expect(
+      todayDateStripDateAt(TODAY_DATE_STRIP_TODAY_INDEX - 1, leapToday),
+    ).toBe('2028-02-29');
+    expect(
+      todayDateStripDateAt(TODAY_DATE_STRIP_TODAY_INDEX - 2, leapToday),
+    ).toBe('2028-02-28');
   });
 
-  it('never renders a future window', () => {
-    const dates = todayDateStripKeys('2026-09-10', TODAY);
+  it('converts a historical date to an index and back without replacing data', () => {
+    const date = '2024-01-15';
+    const index = todayDateStripIndexForDate(date, TODAY);
+    const originalIndices = TODAY_DATE_STRIP_INDICES;
 
-    expect(dates).toHaveLength(7);
-    expect(dates.at(-1)).toBe('2026-09-01');
+    expect(todayDateStripDateAt(index, TODAY)).toBe(date);
+    expect(TODAY_DATE_STRIP_INDICES).toBe(originalIndices);
+    expect(TODAY_DATE_STRIP_INDICES).toHaveLength(TODAY_DATE_STRIP_ITEM_COUNT);
+  });
+
+  it('keeps every adjacent virtual index one calendar day apart', () => {
+    const indices = [0, 137, 5_000, TODAY_DATE_STRIP_TODAY_INDEX - 1];
+
+    for (const index of indices) {
+      const current = todayDateStripDateAt(index, TODAY);
+      const next = todayDateStripDateAt(index + 1, TODAY);
+      const followingIndex = todayDateStripIndexForDate(next, TODAY);
+
+      expect(followingIndex).toBe(index + 1);
+      expect(next).not.toBe(current);
+    }
+  });
+
+  it('clamps future and invalid selections to today', () => {
+    expect(todayDateStripSafeSelection('2026-09-02', TODAY)).toBe(TODAY);
+    expect(todayDateStripSafeSelection('fecha', TODAY)).toBe(TODAY);
+    expect(todayDateStripIndexForDate('2026-09-02', TODAY)).toBe(
+      TODAY_DATE_STRIP_TODAY_INDEX,
+    );
+  });
+
+  it('clamps dates older than the virtual range to its first item', () => {
+    expect(todayDateStripIndexForDate('1900-01-01', TODAY)).toBe(0);
+    expect(todayDateStripSafeSelection('1900-01-01', TODAY)).toBe(
+      todayDateStripDateAt(0, TODAY),
+    );
   });
 });

@@ -2,15 +2,28 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   Bell,
+  Brain,
+  BriefcaseBusiness,
+  Check,
   CheckCircle2,
   ChevronLeft,
+  CircleOff,
   CircleDot,
   Clock3,
+  Dumbbell,
+  GraduationCap,
   Hash,
+  HeartPulse,
+  House,
+  MoonStar,
   Plus,
   Repeat2,
   Route,
+  Shapes,
   Trash2,
+  UsersRound,
+  WalletCards,
+  type LucideIcon,
 } from 'lucide-react-native';
 import { useMemo, useRef, useState } from 'react';
 import {
@@ -26,7 +39,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Button, Card, IconButton, Text } from '@/components/core';
+import {
+  Button,
+  Card,
+  DurationWheelPicker,
+  IconButton,
+  Text,
+} from '@/components/core';
 import {
   AtlasCalendarSheet,
   FeedbackSheet,
@@ -44,6 +63,11 @@ import {
   type HabitMetric,
   type Priority,
 } from '@/features/atlas';
+import {
+  atlasItemTypeOptions,
+  type AtlasItemType,
+  type AtlasItemTypeIcon,
+} from '@/features/atlas/item-type-catalog';
 import { ChoiceChip, FormField } from '@/features/ui';
 
 import {
@@ -65,10 +89,27 @@ type DraftLine = {
   id: string;
   title: string;
   required: boolean;
-  minutes?: string;
+  durationSeconds?: number;
 };
 
 type DraftReminder = AtlasReminder;
+
+type SelectableItemType = Omit<AtlasItemType, 'icon'> & {
+  icon: LucideIcon;
+};
+
+const itemTypeIcons: Readonly<Record<AtlasItemTypeIcon, LucideIcon>> = {
+  brain: Brain,
+  briefcase: BriefcaseBusiness,
+  dumbbell: Dumbbell,
+  'graduation-cap': GraduationCap,
+  'heart-pulse': HeartPulse,
+  house: House,
+  'moon-star': MoonStar,
+  shapes: Shapes,
+  users: UsersRound,
+  wallet: WalletCards,
+};
 
 const weekdays: { day: AtlasWeekday; label: string }[] = [
   { day: 1, label: 'L' },
@@ -116,6 +157,185 @@ function SwitchRow({
       <View style={styles.switchCopy}>
         <Text variant="bodyStrong">{title}</Text>
         <Text tone="secondary" variant="caption">
+          {description}
+        </Text>
+      </View>
+      <Switch
+        accessibilityElementsHidden
+        onValueChange={onValueChange}
+        thumbColor={value ? theme.colors.primary : theme.colors.textMuted}
+        trackColor={{
+          false: theme.colors.track,
+          true: theme.colors.primaryMuted,
+        }}
+        value={value}
+      />
+    </Pressable>
+  );
+}
+
+function ItemTypePicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const theme = useTheme();
+  const options: readonly SelectableItemType[] = atlasItemTypeOptions(
+    value,
+  ).map((itemType) => ({
+    ...itemType,
+    icon: itemTypeIcons[itemType.icon],
+  }));
+  const legacyType = options.find((itemType) => itemType.legacy);
+  const catalogOptions = options.filter((itemType) => !itemType.legacy);
+
+  return (
+    <View accessibilityRole="radiogroup" style={styles.itemTypeSection}>
+      <View style={styles.fieldHeadingCopy}>
+        <Text variant="label">Área</Text>
+        <Text tone="muted" variant="caption">
+          El icono y el color te ayudan a reconocerla de un vistazo.
+        </Text>
+      </View>
+      {legacyType ? (
+        <Pressable
+          accessibilityLabel={`${legacyType.label}, área existente seleccionada`}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: true }}
+          onPress={() => onChange(legacyType.label)}
+          style={[
+            styles.itemTypeLegacy,
+            {
+              backgroundColor: theme.colors.surfaceMuted,
+              borderColor: theme.colors.borderStrong,
+            },
+          ]}
+        >
+          <Shapes color={theme.colors.textSecondary} size={20} />
+          <View style={styles.itemTypeLegacyCopy}>
+            <Text numberOfLines={1} variant="bodyStrong">
+              {legacyType.label}
+            </Text>
+            <Text tone="muted" variant="caption">
+              Área anterior. Se conservará si no eliges otra.
+            </Text>
+          </View>
+          <Check color={theme.colors.primary} size={18} />
+        </Pressable>
+      ) : null}
+      <View style={styles.itemTypeGrid}>
+        {catalogOptions.map((itemType) => {
+          const selected = value === itemType.label;
+          const Icon = itemType.icon;
+          const color = theme.colors[itemType.color];
+          return (
+            <Pressable
+              accessibilityLabel={itemType.label}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              key={itemType.id}
+              onPress={() => onChange(itemType.label)}
+              style={({ pressed }) => [
+                styles.itemTypeOption,
+                {
+                  backgroundColor: selected
+                    ? `${color}20`
+                    : theme.colors.surface,
+                  borderColor: selected ? color : theme.colors.border,
+                  opacity: pressed ? 0.72 : 1,
+                },
+              ]}
+            >
+              <View
+                style={[styles.itemTypeIcon, { backgroundColor: `${color}24` }]}
+              >
+                <Icon color={color} size={20} strokeWidth={2.2} />
+              </View>
+              <Text
+                align="center"
+                numberOfLines={1}
+                tone={selected ? 'primary' : 'secondary'}
+                variant="caption"
+              >
+                {itemType.label}
+              </Text>
+              {selected ? (
+                <View
+                  style={[styles.itemTypeCheck, { backgroundColor: color }]}
+                >
+                  <Check color={theme.colors.textInverse} size={11} />
+                </View>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </View>
+      <Pressable
+        accessibilityLabel="Sin área"
+        accessibilityRole="radio"
+        accessibilityState={{ selected: !value }}
+        onPress={() => onChange('')}
+        style={({ pressed }) => [
+          styles.itemTypeClear,
+          { opacity: pressed ? 0.62 : 1 },
+        ]}
+      >
+        <CircleOff color={theme.colors.textMuted} size={17} />
+        <Text color={!value ? 'primary' : 'textMuted'} variant="caption">
+          Sin área
+        </Text>
+        {!value ? <Check color={theme.colors.primary} size={15} /> : null}
+      </Pressable>
+    </View>
+  );
+}
+
+function LineRequirementSwitch({
+  kind,
+  value,
+  onValueChange,
+}: {
+  kind: 'checklist' | 'steps';
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+}) {
+  const theme = useTheme();
+  const title =
+    kind === 'steps'
+      ? value
+        ? 'Necesario para terminar la rutina'
+        : 'Se puede omitir durante la rutina'
+      : value
+        ? 'Necesaria para completar la tarea'
+        : 'No bloquea la tarea';
+  const description =
+    kind === 'steps'
+      ? value
+        ? 'No podrás terminar la rutina si este paso queda pendiente.'
+        : 'Podrás saltar este paso en el modo guiado.'
+      : value
+        ? 'La tarea seguirá pendiente hasta completar esta subtarea.'
+        : 'Podrás completar la tarea aunque esta subtarea quede pendiente.';
+
+  return (
+    <Pressable
+      accessibilityLabel={`${title}. ${description}`}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      onPress={() => onValueChange(!value)}
+      style={[
+        styles.requirementRow,
+        {
+          backgroundColor: theme.colors.surfaceMuted,
+          borderColor: theme.colors.border,
+        },
+      ]}
+    >
+      <View style={styles.requirementCopy}>
+        <Text variant="bodyStrong">{title}</Text>
+        <Text tone="muted" variant="caption">
           {description}
         </Text>
       </View>
@@ -234,29 +454,34 @@ function DraftLines({
       <View style={styles.fieldHeading}>
         <View style={styles.fieldHeadingCopy}>
           <Text variant="label">
-            {kind === 'steps' ? 'Pasos' : 'Checklist'}
+            {kind === 'steps' ? 'Pasos' : 'Subtareas'}
           </Text>
           <Text tone="muted" variant="caption">
             {kind === 'steps'
-              ? 'El modo guiado los mostrará en este orden.'
-              : 'Marca cuáles son necesarias para cerrar la tarea.'}
+              ? 'La rutina necesita al menos un paso. Se mostrarán en este orden.'
+              : 'Divide la tarea solo si te ayuda. Puedes dejarla sin subtareas.'}
           </Text>
         </View>
-        <IconButton
+        <Button
           accessibilityLabel={
             kind === 'steps' ? 'Añadir paso' : 'Añadir subtarea'
           }
-          icon={Plus}
+          label={kind === 'steps' ? 'Añadir paso' : 'Añadir subtarea'}
+          leadingIcon={Plus}
           onPress={() =>
-            onChange([
-              ...lines,
-              { id: draftId(), title: '', required: true, minutes: '' },
-            ])
+            onChange([...lines, { id: draftId(), title: '', required: true }])
           }
-          size="compact"
-          variant="tonal"
+          size="sm"
+          variant="secondary"
         />
       </View>
+      {lines.length === 0 ? (
+        <Card padding="sm" variant="outlined">
+          <Text tone="secondary" variant="caption">
+            Sin subtareas. Puedes crear la tarea así y añadirlas más tarde.
+          </Text>
+        </Card>
+      ) : null}
       {lines.map((line, index) => (
         <Card
           key={line.id}
@@ -293,7 +518,7 @@ function DraftLines({
             </View>
             <IconButton
               accessibilityLabel={`Eliminar ${kind === 'steps' ? 'paso' : 'subtarea'} ${index + 1}`}
-              disabled={lines.length === 1}
+              disabled={kind === 'steps' && lines.length === 1}
               icon={Trash2}
               onPress={() =>
                 onChange(lines.filter((item) => item.id !== line.id))
@@ -303,30 +528,23 @@ function DraftLines({
             />
           </View>
           <View style={styles.lineOptions}>
-            <ChoiceChip
-              label={line.required ? 'Obligatorio' : 'Opcional'}
-              onPress={() => update(line.id, { required: !line.required })}
-              selected={line.required}
+            <LineRequirementSwitch
+              kind={kind}
+              onValueChange={(required) => update(line.id, { required })}
+              value={line.required}
             />
             {kind === 'steps' ? (
               <View style={styles.stepDuration}>
                 <Text tone="muted" variant="caption">
                   Temporizador
                 </Text>
-                <View style={styles.choices}>
-                  {[0, 1, 2, 5, 10, 15, 20].map((minutes) => (
-                    <ChoiceChip
-                      key={minutes}
-                      label={minutes === 0 ? 'Sin tiempo' : `${minutes} min`}
-                      onPress={() =>
-                        update(line.id, {
-                          minutes: minutes === 0 ? '' : String(minutes),
-                        })
-                      }
-                      selected={(Number(line.minutes) || 0) === minutes}
-                    />
-                  ))}
-                </View>
+                <DurationWheelPicker
+                  accessibilityLabel={`Duración del paso ${index + 1}`}
+                  onChange={(durationSeconds) =>
+                    update(line.id, { durationSeconds })
+                  }
+                  valueSeconds={line.durationSeconds ?? 0}
+                />
               </View>
             ) : null}
           </View>
@@ -359,7 +577,8 @@ function ReminderLines({
         <View style={styles.fieldHeadingCopy}>
           <Text variant="label">Horas</Text>
           <Text tone="muted" variant="caption">
-            Añade una o varias franjas. Cada una puede avisarte de forma exacta.
+            Añade una o varias franjas. Android puede entregarlas con un pequeño
+            retraso.
           </Text>
         </View>
         <IconButton
@@ -374,7 +593,6 @@ function ReminderLines({
                   reminders.map((reminder) => reminder.time),
                 ),
                 enabled: true,
-                exactAlarm: false,
                 snoozeMinutes: 10,
               },
             ])
@@ -419,21 +637,6 @@ function ReminderLines({
               variant="danger"
             />
           </View>
-          <View accessibilityRole="radiogroup" style={styles.choices}>
-            <ChoiceChip
-              label="Flexible · recomendado"
-              onPress={() => update(reminder.id, { exactAlarm: false })}
-              selected={reminder.exactAlarm !== true}
-            />
-            <ChoiceChip
-              label="Hora exacta"
-              onPress={() => update(reminder.id, { exactAlarm: true })}
-              selected={reminder.exactAlarm === true}
-            />
-          </View>
-          <Text tone="muted" variant="caption">
-            El modo flexible ahorra permisos y puede tener un pequeño retraso.
-          </Text>
         </Card>
       ))}
     </View>
@@ -483,10 +686,6 @@ export function CreateScreen() {
   const [title, setTitle] = useState(existing?.title ?? '');
   const [notes, setNotes] = useState(existing?.notes ?? '');
   const [category, setCategory] = useState(existing?.category ?? '');
-  const [tags, setTags] = useState(existing?.tags.join(', ') ?? '');
-  const [customCategoryOpen, setCustomCategoryOpen] = useState(false);
-  const [customTagOpen, setCustomTagOpen] = useState(false);
-  const [customTag, setCustomTag] = useState('');
   const [showMoreOptions, setShowMoreOptions] = useState(Boolean(existing));
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [formFeedback, setFormFeedback] = useState<string | null>(null);
@@ -535,7 +734,6 @@ export function CreateScreen() {
             id: draftId(),
             time: '09:00',
             enabled: true,
-            exactAlarm: false,
             snoozeMinutes: 10,
           },
         ],
@@ -574,7 +772,7 @@ export function CreateScreen() {
           title: subtask.title,
           required: subtask.required,
         }))
-      : [{ id: draftId(), title: '', required: true }],
+      : [],
   );
   const [steps, setSteps] = useState<DraftLine[]>(
     existingRoutine?.steps.length
@@ -582,35 +780,11 @@ export function CreateScreen() {
           id: step.id,
           title: step.title,
           required: step.required,
-          minutes: step.durationSeconds ? `${step.durationSeconds / 60}` : '',
+          durationSeconds: step.durationSeconds,
         }))
-      : [{ id: draftId(), title: '', required: true, minutes: '' }],
+      : [{ id: draftId(), title: '', required: true }],
   );
   const [submitted, setSubmitted] = useState(false);
-  const categoryOptions = Array.from(
-    new Set(
-      [...snapshot.habits, ...snapshot.tasks, ...snapshot.routines]
-        .map((item) => item.category)
-        .filter((value): value is string => Boolean(value?.trim())),
-    ),
-  ).slice(0, 8);
-  const tagOptions = Array.from(
-    new Set(
-      [...snapshot.habits, ...snapshot.tasks, ...snapshot.routines].flatMap(
-        (item) => item.tags,
-      ),
-    ),
-  ).slice(0, 12);
-  const selectedTags = tags
-    .split(',')
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-  const toggleTag = (tag: string) => {
-    const next = selectedTags.includes(tag)
-      ? selectedTags.filter((value) => value !== tag)
-      : [...selectedTags, tag];
-    setTags(next.join(', '));
-  };
   const chooseMetric = (nextMetric: HabitMetric) => {
     if (nextMetric === metric) return;
     setMetric(nextMetric);
@@ -911,10 +1085,7 @@ export function CreateScreen() {
       title: title.trim(),
       notes: notes.trim(),
       category: category.trim(),
-      tags: tags
-        .split(',')
-        .map((tag) => tag.trim())
-        .filter(Boolean),
+      tags: existing?.tags ?? [],
       ...recurrence,
     };
 
@@ -958,9 +1129,7 @@ export function CreateScreen() {
             id: line.id,
             title: line.title.trim(),
             required: line.required,
-            durationSeconds: line.minutes
-              ? Math.max(0, Number(line.minutes) || 0) * 60
-              : undefined,
+            durationSeconds: line.durationSeconds || undefined,
           })),
       });
     }
@@ -988,7 +1157,17 @@ export function CreateScreen() {
           />
           <View style={styles.headerCopy}>
             <Text align="center" variant="subheading">
-              {existing ? 'Editar punto' : 'Nuevo punto'}
+              {existing
+                ? kind === 'habit'
+                  ? 'Editar hábito'
+                  : kind === 'task'
+                    ? 'Editar tarea'
+                    : 'Editar rutina'
+                : kind === 'habit'
+                  ? 'Nuevo hábito'
+                  : kind === 'task'
+                    ? 'Nueva tarea'
+                    : 'Nueva rutina'}
             </Text>
             <Text align="center" tone="muted" variant="caption">
               Se guarda en tu dispositivo
@@ -1059,91 +1238,19 @@ export function CreateScreen() {
               returnKeyType="next"
               value={title}
             />
+            <ItemTypePicker onChange={setCategory} value={category} />
             <Button
               fullWidth
-              label={showMoreOptions ? 'Ocultar opciones' : 'Más opciones'}
+              label={
+                showMoreOptions
+                  ? 'Ocultar detalles'
+                  : 'Añadir detalles opcionales'
+              }
               onPress={() => setShowMoreOptions((value) => !value)}
               variant="ghost"
             />
             {showMoreOptions ? (
               <View style={styles.advancedOptions}>
-                <Text variant="label">Categoría</Text>
-                <View accessibilityRole="radiogroup" style={styles.choices}>
-                  <ChoiceChip
-                    label="Ninguna"
-                    onPress={() => {
-                      setCategory('');
-                      setCustomCategoryOpen(false);
-                    }}
-                    selected={!category}
-                  />
-                  {categoryOptions.map((value) => (
-                    <ChoiceChip
-                      key={value}
-                      label={value}
-                      onPress={() => {
-                        setCategory(value);
-                        setCustomCategoryOpen(false);
-                      }}
-                      selected={category === value}
-                    />
-                  ))}
-                  <ChoiceChip
-                    label="Nueva…"
-                    onPress={() => setCustomCategoryOpen(true)}
-                    selected={customCategoryOpen}
-                  />
-                </View>
-                {customCategoryOpen ? (
-                  <FormField
-                    label="Nueva categoría"
-                    onChangeText={setCategory}
-                    placeholder="Ej. Bienestar"
-                    value={category}
-                  />
-                ) : null}
-
-                <Text variant="label">Etiquetas</Text>
-                <View style={styles.choices}>
-                  {tagOptions.map((tag) => (
-                    <ChoiceChip
-                      key={tag}
-                      label={tag}
-                      onPress={() => toggleTag(tag)}
-                      selected={selectedTags.includes(tag)}
-                    />
-                  ))}
-                  <ChoiceChip
-                    label="Nueva…"
-                    onPress={() => setCustomTagOpen(true)}
-                    selected={customTagOpen}
-                  />
-                </View>
-                {customTagOpen ? (
-                  <View style={styles.customValueRow}>
-                    <View style={styles.column}>
-                      <FormField
-                        autoCapitalize="none"
-                        label="Nueva etiqueta"
-                        onChangeText={setCustomTag}
-                        placeholder="Ej. mañana"
-                        value={customTag}
-                      />
-                    </View>
-                    <Button
-                      disabled={!customTag.trim()}
-                      label="Añadir"
-                      onPress={() => {
-                        const value = customTag.trim();
-                        if (value && !selectedTags.includes(value))
-                          toggleTag(value);
-                        setCustomTag('');
-                        setCustomTagOpen(false);
-                      }}
-                      size="sm"
-                    />
-                  </View>
-                ) : null}
                 <FormField
                   label="Notas"
                   multiline
@@ -1676,6 +1783,57 @@ const styles = StyleSheet.create({
   formGroup: { gap: 14 },
   advancedOptions: { gap: 12 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  itemTypeSection: { gap: 10 },
+  itemTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  itemTypeOption: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexBasis: '30%',
+    gap: 5,
+    justifyContent: 'center',
+    minHeight: 82,
+    minWidth: 92,
+    paddingHorizontal: 8,
+    paddingVertical: 9,
+    position: 'relative',
+  },
+  itemTypeIcon: {
+    alignItems: 'center',
+    borderRadius: 12,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  itemTypeCheck: {
+    alignItems: 'center',
+    borderRadius: 9,
+    height: 18,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 7,
+    top: 7,
+    width: 18,
+  },
+  itemTypeLegacy: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 58,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  itemTypeLegacyCopy: { flex: 1, gap: 1 },
+  itemTypeClear: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 4,
+  },
   twoColumns: { flexDirection: 'row', gap: 12 },
   column: { flex: 1, minWidth: 0 },
   switchRow: {
@@ -1706,15 +1864,22 @@ const styles = StyleSheet.create({
   },
   lineInputWrap: { flex: 1 },
   lineOptions: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 10,
     paddingLeft: 41,
   },
+  requirementRow: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 72,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  requirementCopy: { flex: 1, gap: 2 },
   stepDuration: { flex: 1, gap: 8, minWidth: '100%' },
   pickerField: { gap: 8 },
-  customValueRow: { alignItems: 'flex-end', flexDirection: 'row', gap: 10 },
   reminderCard: { gap: 8 },
   reminderDelete: { marginTop: 28 },
   footer: {

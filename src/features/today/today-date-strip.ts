@@ -1,39 +1,51 @@
-function dateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
+import {
+  addDays,
+  compareDates,
+  daysBetween,
+  isLocalDate,
+  type LocalDate,
+} from '../../domain';
+
+export const TODAY_DATE_STRIP_PAST_DAYS = 20_000;
+export const TODAY_DATE_STRIP_TODAY_INDEX = TODAY_DATE_STRIP_PAST_DAYS;
+export const TODAY_DATE_STRIP_ITEM_COUNT = TODAY_DATE_STRIP_PAST_DAYS + 1;
+
+export const TODAY_DATE_STRIP_INDICES: readonly number[] = Array.from(
+  { length: TODAY_DATE_STRIP_ITEM_COUNT },
+  (_, index) => index,
+);
+
+function checkedDate(value: string, label: string): LocalDate {
+  if (!isLocalDate(value)) throw new Error(`${label} no es una fecha válida.`);
+  return value;
 }
 
-function parseDate(value: string): Date {
-  return new Date(`${value}T12:00:00`);
-}
-
-function addDays(date: Date, amount: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + amount);
-  return result;
-}
-
-/**
- * Keeps the current seven-day window stable for recent dates. Older calendar
- * selections get a centered window so the active day is never off-screen.
- */
-export function todayDateStripKeys(
-  selectedDate: string,
-  today = new Date(),
-): string[] {
-  const current = new Date(today);
-  current.setHours(12, 0, 0, 0);
-  const currentKey = dateKey(current);
-  const safeSelectedKey = selectedDate > currentKey ? currentKey : selectedDate;
-  const selected = parseDate(safeSelectedKey);
-  const recentStart = addDays(current, -6);
-  const selectedIsRecent = selected >= recentStart;
-  const end = selectedIsRecent ? current : addDays(selected, 3);
-  const start = addDays(end, -6);
-
-  return Array.from({ length: 7 }, (_, index) =>
-    dateKey(addDays(start, index)),
+export function todayDateStripDateAt(index: number, today: string): LocalDate {
+  const current = checkedDate(today, 'Hoy');
+  const boundedIndex = Math.max(
+    0,
+    Math.min(TODAY_DATE_STRIP_TODAY_INDEX, Math.trunc(index)),
   );
+  return addDays(current, boundedIndex - TODAY_DATE_STRIP_TODAY_INDEX);
+}
+
+export function todayDateStripSafeSelection(
+  selectedDate: string,
+  today: string,
+): LocalDate {
+  const current = checkedDate(today, 'Hoy');
+  if (!isLocalDate(selectedDate)) return current;
+  if (compareDates(selectedDate, current) > 0) return current;
+
+  const oldest = addDays(current, -TODAY_DATE_STRIP_PAST_DAYS);
+  return compareDates(selectedDate, oldest) < 0 ? oldest : selectedDate;
+}
+
+export function todayDateStripIndexForDate(
+  selectedDate: string,
+  today: string,
+): number {
+  const current = checkedDate(today, 'Hoy');
+  const safeSelection = todayDateStripSafeSelection(selectedDate, current);
+  return TODAY_DATE_STRIP_TODAY_INDEX + daysBetween(current, safeSelection);
 }

@@ -1,13 +1,29 @@
-import { describe, expect, it, vi } from 'vitest';
+import type { SQLiteDatabase } from 'expo-sqlite';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   isWidgetScheduleDueOnDate,
+  SQLiteAtlasWidgetDataSource,
   widgetHabitOccurrenceId,
   type WidgetScheduleDefinition,
 } from './widget-data-source';
 
+const native = vi.hoisted(() => ({
+  getCommandGateway: vi.fn(),
+  loadAtlasSnapshotFromSQLite: vi.fn(),
+}));
+
 vi.mock('expo-sqlite', () => ({
   openDatabaseAsync: vi.fn(),
+}));
+
+vi.mock('../data', () => ({
+  getCommandGateway: native.getCommandGateway,
+  getDatabase: vi.fn(),
+}));
+
+vi.mock('./snapshot-loader', () => ({
+  loadAtlasSnapshotFromSQLite: native.loadAtlasSnapshotFromSQLite,
 }));
 
 function definition(
@@ -31,6 +47,10 @@ function definition(
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('widget schedule projection', () => {
   it('supports weekday and interval schedules with civil dates', () => {
@@ -72,5 +92,76 @@ describe('widget schedule projection', () => {
     expect(widgetHabitOccurrenceId('agua 2L', '2026-08-31', 2)).not.toBe(
       widgetHabitOccurrenceId('agua 2L', '2026-08-31', 1),
     );
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function widgetDatabase(): SQLiteDatabase {
+  return {
+    getAllAsync: vi.fn().mockResolvedValue([]),
+  } as unknown as SQLiteDatabase;
+}
+
+describe('SQLite widget snapshots', () => {
+  it('shares one in-flight SQLite projection across concurrent widget instances', async () => {
+    const pending = deferred<null>();
+    native.getCommandGateway.mockResolvedValue({});
+    native.loadAtlasSnapshotFromSQLite.mockReturnValueOnce(pending.promise);
+    const source = new SQLiteAtlasWidgetDataSource(
+      async () => widgetDatabase(),
+      () => new Date('2026-09-01T09:00:00.000Z'),
+    );
+
+    const first = source.getSnapshot('AtlasProgressWidget');
+    const second = source.getSnapshot('AtlasHabitsWidget');
+    const third = source.getSnapshot('AtlasTasksWidget');
+
+    await vi.waitFor(() => {
+      expect(native.loadAtlasSnapshotFromSQLite).toHaveBeenCalledTimes(1);
+    });
+    pending.resolve(null);
+
+    await expect(Promise.all([first, second, third])).resolves.toEqual([
+      expect.objectContaining({
+        progress: expect.objectContaining({ completed: 0, total: 0 }),
+      }),
+      expect.objectContaining({
+        progress: expect.objectContaining({ completed: 0, total: 0 }),
+      }),
+      expect.objectContaining({
+        progress: expect.objectContaining({ completed: 0, total: 0 }),
+      }),
+    ]);
+    expect(native.loadAtlasSnapshotFromSQLite).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a later widget refresh after a shared projection fails', async () => {
+    native.getCommandGateway.mockResolvedValue({});
+    native.loadAtlasSnapshotFromSQLite
+      .mockRejectedValueOnce(new Error('SQLite unavailable'))
+      .mockResolvedValueOnce(null);
+    const source = new SQLiteAtlasWidgetDataSource(
+      async () => widgetDatabase(),
+      () => new Date('2026-09-01T09:00:00.000Z'),
+    );
+
+    await expect(source.getSnapshot('AtlasProgressWidget')).rejects.toThrow(
+      'SQLite unavailable',
+    );
+    await expect(source.getSnapshot('AtlasProgressWidget')).resolves.toEqual(
+      expect.objectContaining({
+        progress: expect.objectContaining({ completed: 0, total: 0 }),
+      }),
+    );
+    expect(native.loadAtlasSnapshotFromSQLite).toHaveBeenCalledTimes(2);
   });
 });

@@ -6,8 +6,8 @@ import {
   DEFAULT_SNOOZE_MINUTES,
   REMINDER_CATEGORY,
   REMINDER_CHANNEL,
+  ROUTINE_REMINDER_CATEGORY,
 } from './constants';
-import { assertExactAlarmAccessAsync } from './permissions';
 import { createReminderNotificationData } from './reminder-data';
 
 export interface OneShotReminderInput {
@@ -20,7 +20,19 @@ export interface OneShotReminderInput {
   readonly body?: string;
   readonly fireAt: Date;
   readonly snoozeMinutes?: number;
+  /**
+   * Legacy persisted field. Expo schedules date notifications with its own
+   * platform semantics, so Atlas intentionally ignores this value.
+   */
   readonly exactAlarm?: boolean;
+}
+
+export function reminderCategoryForTarget(
+  targetKind: CommandTargetKind,
+): string {
+  return targetKind === 'routine-step'
+    ? ROUTINE_REMINDER_CATEGORY
+    : REMINDER_CATEGORY;
 }
 
 /**
@@ -35,14 +47,15 @@ export async function scheduleOneShotReminderAsync(
     throw new RangeError('fireAt must be in the future.');
   }
 
-  if (input.exactAlarm === true) await assertExactAlarmAccessAsync();
-
   return Notifications.scheduleNotificationAsync({
     identifier: input.notificationId,
     content: {
       title: input.title,
-      body: input.body,
-      categoryIdentifier: REMINDER_CATEGORY,
+      body:
+        input.targetKind === 'routine-step'
+          ? 'Toca para abrir Atlas o posponer'
+          : input.body,
+      categoryIdentifier: reminderCategoryForTarget(input.targetKind),
       sound: 'default',
       autoDismiss: true,
       data: createReminderNotificationData({

@@ -2,6 +2,8 @@ export { Button } from './button';
 export type { ButtonProps, ButtonSize, ButtonVariant } from './button';
 export { Card } from './card';
 export type { CardPadding, CardProps, CardVariant } from './card';
+export { DurationWheelPicker } from './duration-wheel-picker';
+export type { DurationWheelPickerProps } from './duration-wheel-picker';
 export { EmptyState } from './empty-state';
 export type { EmptyStateProps } from './empty-state';
 export { IconButton } from './icon-button';

@@ -1,11 +1,12 @@
 import * as Application from 'expo-application';
 import {
-  AlarmClockCheck,
   BellRing,
+  CalendarCheck,
   Cloud,
   GitBranch,
   HardDrive,
   Info,
+  ListTodo,
   LogOut,
   Moon,
   RefreshCw,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { requestPinWidget } from 'react-native-android-widget';
 
 import { Button, Card, Screen, Text } from '@/components/core';
 import {
@@ -23,11 +25,18 @@ import {
 import { useThemeContext } from '@/design';
 import { useAtlasApp, type AdapterActionResult } from '@/features/atlas';
 import { ChoiceChip, PageHeader, SettingRow } from '@/features/ui';
+import { ATLAS_WIDGET_NAMES } from '@/widgets';
 
 type ActionCopy = Readonly<{
   successTitle: string;
   failureTitle: string;
   unexpectedMessage?: string;
+}>;
+
+type WidgetFeedback = Readonly<{
+  title: string;
+  message: string;
+  tone: 'neutral' | 'danger';
 }>;
 
 function syncIssueTitle(kind?: string): string {
@@ -47,7 +56,6 @@ export function SettingsScreen() {
     connectGoogle,
     disconnectGoogle,
     requestNotificationAccess,
-    requestExactAlarmAccess,
     setRemindersEnabled,
     checkForUpdate,
   } = useAtlasApp();
@@ -55,25 +63,18 @@ export function SettingsScreen() {
   const [feedback, setFeedback] = useState<
     (AdapterActionResult & { title: string }) | null
   >(null);
+  const [widgetFeedback, setWidgetFeedback] = useState<WidgetFeedback | null>(
+    null,
+  );
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
   const [awaitingSystemSettings, setAwaitingSystemSettings] = useState<
-    'notifications' | 'notification-master' | 'alarms' | null
+    'notifications' | 'notification-master' | null
   >(null);
-  const version = Application.nativeApplicationVersion ?? '0.1.1';
+  const version = Application.nativeApplicationVersion ?? '0.1.2';
   const capability = snapshot.reminderCapability ?? {
     masterEnabled: true,
     notifications: 'askable' as const,
-    exactAlarms: 'needs-settings' as const,
   };
-  const hasExactReminders = [
-    ...snapshot.habits,
-    ...snapshot.tasks,
-    ...snapshot.routines,
-  ].some((item) =>
-    item.reminders.some(
-      (reminder) => reminder.enabled && reminder.exactAlarm === true,
-    ),
-  );
 
   const run = useCallback(
     async (
@@ -84,15 +85,12 @@ export function SettingsScreen() {
       setPending(id);
       try {
         const result = await action();
-        const settingsTarget:
-          'notifications' | 'notification-master' | 'alarms' | null =
-          id === 'alarms'
-            ? 'alarms'
-            : id === 'reminder-master'
-              ? 'notification-master'
-              : id === 'notifications'
-                ? 'notifications'
-                : null;
+        const settingsTarget: 'notifications' | 'notification-master' | null =
+          id === 'reminder-master'
+            ? 'notification-master'
+            : id === 'notifications'
+              ? 'notifications'
+              : null;
         if (result.code === 'settings-opened' && settingsTarget !== null) {
           setAwaitingSystemSettings(settingsTarget);
           setFeedback(null);
@@ -138,22 +136,44 @@ export function SettingsScreen() {
         : capability.notifications === 'not-applicable'
           ? 'No aplicable'
           : 'Pendientes';
-  const exactLabel = !hasExactReminders
-    ? 'No necesario'
-    : capability.exactAlarms === 'granted'
-      ? 'Permitidas'
-      : capability.exactAlarms === 'not-applicable'
-        ? 'No aplicable'
-        : 'Requiere ajustes';
-
   const systemSettingsReady =
-    ((awaitingSystemSettings === 'notifications' ||
+    (awaitingSystemSettings === 'notifications' ||
       awaitingSystemSettings === 'notification-master') &&
-      (capability.notifications === 'granted' ||
-        capability.notifications === 'not-applicable')) ||
-    (awaitingSystemSettings === 'alarms' &&
-      (capability.exactAlarms === 'granted' ||
-        capability.exactAlarms === 'not-applicable'));
+    (capability.notifications === 'granted' ||
+      capability.notifications === 'not-applicable');
+
+  const requestWidgetPin = useCallback(async (widgetName: string) => {
+    const id = `widget-${widgetName}`;
+    setPending(id);
+    setWidgetFeedback(null);
+    try {
+      const accepted = await requestPinWidget({ widgetName });
+      setWidgetFeedback(
+        accepted
+          ? {
+              title: 'Solicitud abierta',
+              message:
+                'El launcher ha aceptado la solicitud. Confírmala para añadir el widget a la pantalla de inicio.',
+              tone: 'neutral',
+            }
+          : {
+              title: 'Añádelo desde la pantalla de inicio',
+              message:
+                'Este launcher no admite la solicitud desde Atlas. Mantén pulsada una zona vacía de la pantalla de inicio y busca Atlas en Widgets.',
+              tone: 'neutral',
+            },
+      );
+    } catch {
+      setWidgetFeedback({
+        title: 'No se pudo abrir el selector',
+        message:
+          'Prueba a añadir el widget desde el selector de Widgets de la pantalla de inicio.',
+        tone: 'danger',
+      });
+    } finally {
+      setPending(null);
+    }
+  }, []);
 
   return (
     <Screen
@@ -270,12 +290,67 @@ export function SettingsScreen() {
         <Card padding="sm">
           <SettingRow
             accessibilityHint="Abre el control local y los permisos necesarios."
-            description={`${notificationLabel}. Los avisos flexibles no necesitan permiso de alarma exacta.`}
+            description={`${notificationLabel}. Android puede entregarlos con un pequeño retraso.`}
             icon={BellRing}
             onPress={() => setReminderSheetOpen(true)}
             title="Recordatorios de Atlas"
             value={capability.masterEnabled ? 'Activos' : 'Pausados'}
           />
+        </Card>
+      </View>
+
+      <View style={styles.section}>
+        <Text tone="muted" variant="eyebrow">
+          PANTALLA DE INICIO
+        </Text>
+        <Card padding="sm">
+          <SettingRow
+            accessibilityHint="Abre la solicitud de Android para añadir el resumen de hoy."
+            description="Resumen de hábitos completados hoy."
+            disabled={pending !== null}
+            icon={CalendarCheck}
+            onPress={() => void requestWidgetPin(ATLAS_WIDGET_NAMES.progress)}
+            title="Progreso de hoy"
+            value={
+              pending === `widget-${ATLAS_WIDGET_NAMES.progress}`
+                ? 'Abriendo…'
+                : 'Añadir'
+            }
+          />
+          <SettingRow
+            accessibilityHint="Abre la solicitud de Android para añadir hábitos a la pantalla de inicio."
+            description="Marca hábitos sin abrir Atlas."
+            disabled={pending !== null}
+            icon={ListTodo}
+            onPress={() => void requestWidgetPin(ATLAS_WIDGET_NAMES.habits)}
+            title="Hábitos de hoy"
+            value={
+              pending === `widget-${ATLAS_WIDGET_NAMES.habits}`
+                ? 'Abriendo…'
+                : 'Añadir'
+            }
+          />
+          <SettingRow
+            accessibilityHint="Abre la solicitud de Android para añadir próximas tareas a la pantalla de inicio."
+            description="Consulta las tareas que vienen."
+            disabled={pending !== null}
+            icon={GitBranch}
+            onPress={() => void requestWidgetPin(ATLAS_WIDGET_NAMES.tasks)}
+            title="Próximas tareas"
+            value={
+              pending === `widget-${ATLAS_WIDGET_NAMES.tasks}`
+                ? 'Abriendo…'
+                : 'Añadir'
+            }
+          />
+          {widgetFeedback ? (
+            <InlineFeedback
+              message={widgetFeedback.message}
+              onClose={() => setWidgetFeedback(null)}
+              title={widgetFeedback.title}
+              tone={widgetFeedback.tone}
+            />
+          ) : null}
         </Card>
       </View>
 
@@ -359,7 +434,7 @@ export function SettingsScreen() {
                     : awaitingSystemSettings === 'notifications' ||
                         awaitingSystemSettings === 'notification-master'
                       ? 'Activa Notificaciones en Android y vuelve a Atlas. El estado se comprobará de nuevo.'
-                      : 'Activa Alarmas y recordatorios para Atlas y vuelve. El estado se comprobará de nuevo.'
+                      : 'Activa Notificaciones en Android y vuelve a Atlas. El estado se comprobará de nuevo.'
               }
               onClose={() => setAwaitingSystemSettings(null)}
               title={
@@ -398,34 +473,6 @@ export function SettingsScreen() {
                       failureTitle: 'Notificaciones no activadas',
                     },
                     requestNotificationAccess,
-                  )
-                }
-                size="sm"
-                variant="secondary"
-              />
-            ) : null}
-          </View>
-          <View style={styles.permissionRow}>
-            <AlarmClockCheck color={theme.colors.primary} size={20} />
-            <View style={styles.permissionCopy}>
-              <Text variant="label">Alarmas exactas</Text>
-              <Text tone="secondary" variant="caption">
-                {exactLabel}
-              </Text>
-            </View>
-            {hasExactReminders &&
-            capability.exactAlarms === 'needs-settings' ? (
-              <Button
-                label="Abrir ajustes"
-                loading={pending === 'alarms'}
-                onPress={() =>
-                  void run(
-                    'alarms',
-                    {
-                      successTitle: 'Alarmas exactas activadas',
-                      failureTitle: 'Revisa los ajustes de Android',
-                    },
-                    requestExactAlarmAccess,
                   )
                 }
                 size="sm"

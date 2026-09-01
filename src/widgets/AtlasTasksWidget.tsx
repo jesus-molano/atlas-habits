@@ -1,5 +1,8 @@
+'use no memo';
+
 import { FlexWidget, TextWidget } from 'react-native-android-widget';
 
+import type { AtlasWidgetLayout } from './layout';
 import type { AtlasWidgetSnapshot, WidgetUpcomingTask } from './model';
 import type { AtlasWidgetPalette } from './theme';
 import { widgetFonts } from './theme';
@@ -7,10 +10,71 @@ import { widgetFonts } from './theme';
 export interface AtlasTasksWidgetProps {
   readonly snapshot: AtlasWidgetSnapshot;
   readonly palette: AtlasWidgetPalette;
+  readonly layout: AtlasWidgetLayout;
 }
 
-export function AtlasTasksWidget({ snapshot, palette }: AtlasTasksWidgetProps) {
-  const tasks = snapshot.upcomingTasks.slice(0, 3);
+export function AtlasTasksWidget({
+  snapshot,
+  palette,
+  layout,
+}: AtlasTasksWidgetProps) {
+  const tasks = snapshot.upcomingTasks.slice(0, layout.maxTaskRows);
+
+  if (layout.ultraCompact) {
+    const task = tasks[0];
+
+    return (
+      <FlexWidget
+        clickAction="OPEN_APP"
+        accessibilityLabel="Abrir próximas tareas en Atlas"
+        style={{
+          width: 'match_parent',
+          height: 'match_parent',
+          padding: layout.padding,
+          flexDirection: 'row',
+          alignItems: 'center',
+          flexGap: 8,
+          backgroundColor: palette.background,
+          borderColor: palette.border,
+          borderWidth: 1,
+          borderRadius: 18,
+        }}
+      >
+        <TextWidget
+          text="PRÓXIMAS"
+          style={{
+            color: palette.muted,
+            fontFamily: widgetFonts.bold,
+            fontSize: layout.titleFontSize,
+            letterSpacing: 1.1,
+          }}
+        />
+        <FlexWidget style={{ flex: 1 }}>
+          <TextWidget
+            text={task?.title ?? 'Todo despejado'}
+            maxLines={1}
+            truncate="END"
+            style={{
+              color: palette.text,
+              fontFamily: widgetFonts.medium,
+              fontSize: 14,
+            }}
+          />
+        </FlexWidget>
+        {task ? (
+          <TextWidget
+            text={task.dueLabel}
+            maxLines={1}
+            style={{
+              color: task.priority === 'high' ? palette.accent : palette.muted,
+              fontFamily: widgetFonts.bold,
+              fontSize: 11,
+            }}
+          />
+        ) : null}
+      </FlexWidget>
+    );
+  }
 
   return (
     <FlexWidget
@@ -19,7 +83,7 @@ export function AtlasTasksWidget({ snapshot, palette }: AtlasTasksWidgetProps) {
       style={{
         width: 'match_parent',
         height: 'match_parent',
-        padding: 16,
+        padding: layout.padding,
         flexDirection: 'column',
         flexGap: 8,
         backgroundColor: palette.background,
@@ -33,7 +97,7 @@ export function AtlasTasksWidget({ snapshot, palette }: AtlasTasksWidgetProps) {
         style={{
           color: palette.muted,
           fontFamily: widgetFonts.bold,
-          fontSize: 11,
+          fontSize: layout.titleFontSize,
           letterSpacing: 1.2,
         }}
       />
@@ -44,13 +108,18 @@ export function AtlasTasksWidget({ snapshot, palette }: AtlasTasksWidgetProps) {
           style={{
             color: palette.text,
             fontFamily: widgetFonts.bold,
-            fontSize: 17,
+            fontSize: layout.compact ? 16 : 17,
             marginTop: 10,
           }}
         />
       ) : (
         tasks.map((task) => (
-          <TaskRow key={task.id} task={task} palette={palette} />
+          <TaskRow
+            key={task.id}
+            layout={layout}
+            task={task}
+            palette={palette}
+          />
         ))
       )}
     </FlexWidget>
@@ -60,9 +129,11 @@ export function AtlasTasksWidget({ snapshot, palette }: AtlasTasksWidgetProps) {
 function TaskRow({
   task,
   palette,
+  layout,
 }: {
   readonly task: WidgetUpcomingTask;
   readonly palette: AtlasWidgetPalette;
+  readonly layout: AtlasWidgetLayout;
 }) {
   return (
     <FlexWidget
@@ -90,7 +161,7 @@ function TaskRow({
           style={{
             color: palette.text,
             fontFamily: widgetFonts.medium,
-            fontSize: 14,
+            fontSize: layout.bodyFontSize,
           }}
         />
       </FlexWidget>
@@ -100,7 +171,7 @@ function TaskRow({
         style={{
           color: task.priority === 'high' ? palette.accent : palette.muted,
           fontFamily: widgetFonts.bold,
-          fontSize: 12,
+          fontSize: layout.compact ? 11 : 12,
         }}
       />
     </FlexWidget>

@@ -180,6 +180,42 @@ export type AtlasSnapshot = {
   source: 'local_store' | 'external_service';
 };
 
+export type AtlasDayProgress = Readonly<{
+  completed: number;
+  total: number;
+  ratio: number;
+}>;
+
+/** A date-bound projection. It never replaces the canonical snapshot for Hoy. */
+export type AtlasDayView = Readonly<{
+  localDate: string;
+  habits: HabitItem[];
+  tasks: TaskItem[];
+  routines: RoutineItem[];
+  progress: AtlasDayProgress;
+}>;
+
+export type AtlasDayMutation =
+  | Readonly<{
+      kind: 'task.update';
+      taskId: string;
+      completed: boolean;
+      subtasks?: readonly Readonly<{ id: string; completed: boolean }>[];
+    }>
+  | Readonly<{ kind: 'routine.start'; routineId: string }>
+  | Readonly<{
+      kind: 'routine.step';
+      routineId: string;
+      stepId: string;
+      completed: boolean;
+    }>
+  | Readonly<{
+      kind: 'routine.finish';
+      routineId: string;
+      completed: boolean;
+    }>
+  | Readonly<{ kind: 'routine.reset'; routineId: string }>;
+
 export type CreateHabitDraft = {
   kind: 'habit';
   title: string;
@@ -249,6 +285,13 @@ export type AdapterActionResult = {
  */
 export type AtlasAppAdapter = {
   loadSnapshot(): Promise<AtlasSnapshot | null>;
+  /** Loads one date without changing the canonical snapshot for Hoy. */
+  loadDay?(localDate: string): Promise<AtlasDayView | null>;
+  /** Applies an occurrence-only change to one date and returns its projection. */
+  applyDayMutation?(
+    localDate: string,
+    mutation: AtlasDayMutation,
+  ): Promise<AtlasDayView | null>;
   /** Pure canonical read. It must not start sync or platform maintenance. */
   refreshSnapshot?(): Promise<AtlasSnapshot | null>;
   saveSnapshot(snapshot: AtlasSnapshot, localDate?: string): Promise<void>;

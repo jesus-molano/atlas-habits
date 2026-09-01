@@ -20,6 +20,9 @@ export {
 export type {
   AdapterActionResult,
   AtlasAppAdapter,
+  AtlasDayMutation,
+  AtlasDayProgress,
+  AtlasDayView,
   AtlasItem,
   AtlasReminder,
   AtlasSchedule,

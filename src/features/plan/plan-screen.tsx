@@ -53,6 +53,7 @@ export function PlanScreen() {
   const actionHabit = snapshot.habits.find(
     (habit) => habit.id === actionHabitId,
   );
+  const activeTimerItemId = snapshot.activeTimer?.itemId;
 
   return (
     <Screen
@@ -110,9 +111,13 @@ export function PlanScreen() {
               onAdd={(amount) => addHabitValue(habit.id, amount)}
               onOpenActions={() => setActionHabitId(habit.id)}
               onOpenTimer={
-                habit.metric === 'duration'
+                habit.metric === 'duration' &&
+                (!activeTimerItemId || activeTimerItemId === habit.id)
                   ? () => openTimerSheet(habit.id)
                   : undefined
+              }
+              durationActionMode={
+                activeTimerItemId === habit.id ? 'active' : 'timer'
               }
               onToggle={() => toggleHabit(habit.id)}
             />
@@ -129,10 +134,17 @@ export function PlanScreen() {
             <TaskCard
               key={task.id}
               onOpenActions={() => router.push(`/create?id=${task.id}`)}
-              onOpenTimer={() => openTimerSheet(task.id)}
+              onOpenTimer={
+                !activeTimerItemId || activeTimerItemId === task.id
+                  ? () => openTimerSheet(task.id)
+                  : undefined
+              }
               onToggle={() => toggleTask(task.id)}
               onToggleSubtask={(subtaskId) => toggleSubtask(task.id, subtaskId)}
               task={task}
+              timerActionMode={
+                activeTimerItemId === task.id ? 'active' : 'start'
+              }
             />
           ))}
         </View>

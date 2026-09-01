@@ -99,4 +99,25 @@ describe('buildAtlasReminderPlan', () => {
     expect(plan[0]?.fireAt.getHours()).toBe(18);
     expect(plan[0]?.fireAt.getMinutes()).toBe(15);
   });
+
+  it('trata las rutinas como un aviso para abrir Atlas, no para completarlas', () => {
+    const [entry] = buildAtlasReminderPlan({
+      definitions: [
+        definition({
+          itemId: 'routine-1',
+          itemType: 'routine',
+          exactAlarm: true,
+        }),
+      ],
+      now: new Date(2026, 7, 31, 7, 0),
+      horizonDays: 0,
+    });
+
+    expect(entry).toMatchObject({
+      targetKind: 'routine-step',
+      targetId: 'routine-1',
+      body: 'Toca para abrir Atlas o posponer',
+    });
+    expect(entry).not.toHaveProperty('exactAlarm');
+  });
 });
