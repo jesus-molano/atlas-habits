@@ -70,7 +70,7 @@ export function SettingsScreen() {
   const [awaitingSystemSettings, setAwaitingSystemSettings] = useState<
     'notifications' | 'notification-master' | null
   >(null);
-  const version = Application.nativeApplicationVersion ?? '0.1.2';
+  const version = Application.nativeApplicationVersion ?? '0.1.3';
   const capability = snapshot.reminderCapability ?? {
     masterEnabled: true,
     notifications: 'askable' as const,

@@ -19,11 +19,7 @@ import type {
   ReminderCapability,
   SyncState,
 } from '../features/atlas/types';
-import {
-  configureReminderCategoryAndChannelAsync,
-  getExactAlarmAccessAsync,
-  requestExactAlarmAccessAsync,
-} from '../platform/notifications';
+import { configureReminderCategoryAndChannelAsync } from '../platform/notifications';
 import {
   checkForAtlasUpdateAsync,
   getAtlasInstallPermissionAsync,
@@ -138,13 +134,9 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
       return {
         masterEnabled,
         notifications: 'not-applicable',
-        exactAlarms: 'not-applicable',
       };
     }
-    const [permission, exactAlarms] = await Promise.all([
-      Notifications.getPermissionsAsync(),
-      getExactAlarmAccessAsync(),
-    ]);
+    const permission = await Notifications.getPermissionsAsync();
     return {
       masterEnabled,
       notifications: permission.granted
@@ -152,12 +144,6 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
         : permission.canAskAgain
           ? 'askable'
           : 'blocked',
-      exactAlarms:
-        exactAlarms === 'granted'
-          ? 'granted'
-          : exactAlarms === 'not-applicable'
-            ? 'not-applicable'
-            : 'needs-settings',
     };
   }
 
@@ -426,35 +412,6 @@ export class SQLiteAtlasAppAdapter implements AtlasAppAdapter {
         message: errorMessage(
           error,
           'No se pudo solicitar el permiso de notificaciones.',
-        ),
-      };
-    }
-  }
-
-  async requestExactAlarmAccess(): Promise<AdapterActionResult> {
-    try {
-      const access = await getExactAlarmAccessAsync();
-      if (access === 'granted' || access === 'not-applicable') {
-        const runtime = await this.runtime();
-        await this.runMaintenance(runtime, false);
-        return {
-          ok: true,
-          message: 'Las alarmas exactas ya están activadas para Atlas.',
-        };
-      }
-      await requestExactAlarmAccessAsync();
-      return {
-        ok: false,
-        code: 'settings-opened',
-        message:
-          'Se han abierto los ajustes de Alarmas y recordatorios. Activa Atlas y vuelve a la aplicación.',
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        message: errorMessage(
-          error,
-          'No se pudieron abrir los ajustes de alarmas exactas.',
         ),
       };
     }

@@ -131,8 +131,8 @@ describe('invokeOptionalAdapterAction', () => {
 
     await expect(
       invokeOptionalAdapterAction(
-        adapter({ requestExactAlarmAccess: undefined }),
-        'requestExactAlarmAccess',
+        adapter({ checkForUpdate: undefined }),
+        'checkForUpdate',
         unavailable,
       ),
     ).resolves.toEqual({ ok: false, message: 'No disponible' });

@@ -262,7 +262,6 @@ export type AtlasAppContextValue = {
   connectGoogle(): Promise<AdapterActionResult>;
   disconnectGoogle(): Promise<AdapterActionResult>;
   requestNotificationAccess(): Promise<AdapterActionResult>;
-  requestExactAlarmAccess(): Promise<AdapterActionResult>;
   setRemindersEnabled(enabled: boolean): Promise<AdapterActionResult>;
   checkForUpdate(): Promise<AdapterActionResult>;
 };
@@ -1384,8 +1383,6 @@ export function AtlasAppProvider({
       disconnectGoogle,
       requestNotificationAccess: () =>
         runAdapterAction('requestNotificationAccess', 'Los recordatorios'),
-      requestExactAlarmAccess: () =>
-        runAdapterAction('requestExactAlarmAccess', 'Las alarmas exactas'),
       setRemindersEnabled: async (enabled) => {
         const method = adapterRef.current.setRemindersEnabled;
         if (!method) return adapterUnavailable('Los recordatorios');

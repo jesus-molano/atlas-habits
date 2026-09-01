@@ -324,9 +324,9 @@ jobs:
 
           APK_PERMISSIONS="$("${AAPT}" dump permissions dist/atlas.apk)"
           printf '%s\n' "${APK_PERMISSIONS}" | grep -Fq 'android.permission.REQUEST_INSTALL_PACKAGES'
-          printf '%s\n' "${APK_PERMISSIONS}" | grep -Fq 'android.permission.SCHEDULE_EXACT_ALARM'
           for forbidden_permission in \
             android.permission.READ_EXTERNAL_STORAGE \
+            android.permission.SCHEDULE_EXACT_ALARM \
             android.permission.SYSTEM_ALERT_WINDOW \
             android.permission.WRITE_EXTERNAL_STORAGE; do
             if printf '%s\n' "${APK_PERMISSIONS}" | grep -Fq "${forbidden_permission}"; then

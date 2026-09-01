@@ -9,7 +9,6 @@ export type AtlasAdapterActionName = keyof Pick<
   | 'connectGoogle'
   | 'disconnectGoogle'
   | 'requestNotificationAccess'
-  | 'requestExactAlarmAccess'
   | 'checkForUpdate'
 >;
 

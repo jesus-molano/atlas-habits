@@ -37,7 +37,7 @@ export type AtlasReminder = {
   label?: string;
   scheduleSlotId?: string;
   enabled: boolean;
-  /** Exact alarms require explicit Android special access. New rules are flexible. */
+  /** Legacy persisted field. Scheduling intentionally ignores this value. */
   exactAlarm?: boolean;
   snoozeMinutes: number;
 };
@@ -132,7 +132,6 @@ export type ActiveTimerState = Readonly<{
 export type ReminderCapability = Readonly<{
   masterEnabled: boolean;
   notifications: 'granted' | 'askable' | 'blocked' | 'not-applicable';
-  exactAlarms: 'granted' | 'needs-settings' | 'not-applicable';
 }>;
 
 export type SyncIssue = Readonly<{
@@ -299,7 +298,6 @@ export type AtlasAppAdapter = {
   connectGoogle?(): Promise<AdapterActionResult>;
   disconnectGoogle?(): Promise<AdapterActionResult>;
   requestNotificationAccess?(): Promise<AdapterActionResult>;
-  requestExactAlarmAccess?(): Promise<AdapterActionResult>;
   setRemindersEnabled?(enabled: boolean): Promise<AdapterActionResult>;
   startTimer?(itemId: string): Promise<AdapterActionResult>;
   pauseTimer?(): Promise<AdapterActionResult>;
